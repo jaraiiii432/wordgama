@@ -87,24 +87,42 @@ function WordAssistant() {
     }
   }
 
+  const [uploadMs, setUploadMs] = useState<number | null>(null);
+  const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
+
+  async function resizeImage(file: File, maxDim = 512): Promise<string> {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
     setUploading(true);
+    setUploadMs(null);
+    const t0 = performance.now();
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(r.error);
-        r.readAsDataURL(file);
-      });
-      const { letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      const dataUrl = await resizeImage(file, 512);
+      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       setScanned(got);
+      setScanDebug(rows);
       setActive("scanned");
+      console.log("[OCR] Row/col mapping:");
+      rows.forEach((r, i) => console.log(`  row ${i}:`, r.join(" ")));
     } catch (err: any) {
       setError(err?.message ?? "Failed to read grid");
     } finally {
+      setUploadMs(Math.round(performance.now() - t0));
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
