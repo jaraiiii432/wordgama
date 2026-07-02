@@ -25,14 +25,19 @@ export const Route = createFileRoute("/")({
 });
 
 const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
+const EMPTY_GRID = Array(16).fill("");
 
 function randomGrid(): string[] {
   const dice = "AAAAAABBCCDDEEEEEEFFGGHHIIIIJKLLMMNNNNOOOOPPQRRRSSSSTTTTUUVVWWXYYZ";
   return Array.from({ length: 16 }, () => dice[Math.floor(Math.random() * dice.length)]);
 }
 
+type GridId = "manual" | "scanned";
+
 function WordAssistant() {
-  const [letters, setLetters] = useState<string[]>(DEFAULT_GRID);
+  const [manual, setManual] = useState<string[]>(DEFAULT_GRID);
+  const [scanned, setScanned] = useState<string[]>(EMPTY_GRID);
+  const [active, setActive] = useState<GridId>("manual");
   const [results, setResults] = useState<Path[]>([]);
   const [ready, setReady] = useState(false);
   const [solving, setSolving] = useState(false);
@@ -46,7 +51,11 @@ function WordAssistant() {
     loadTrie().then(() => setReady(true));
   }, []);
 
-  const grid = useMemo(() => letters.map((c) => (c || " ").toLowerCase()), [letters]);
+  const activeLetters = active === "manual" ? manual : scanned;
+  const grid = useMemo(
+    () => activeLetters.map((c) => (c || " ").toLowerCase()),
+    [activeLetters],
+  );
 
   useEffect(() => {
     if (!ready) return;
@@ -64,16 +73,16 @@ function WordAssistant() {
     return () => clearTimeout(id);
   }, [grid, ready]);
 
-  function setCell(i: number, v: string) {
+  function setManualCell(i: number, v: string) {
     const ch = v.slice(-1).toUpperCase();
     if (ch && !/[A-Z]/.test(ch)) return;
-    setLetters((prev) => {
+    setManual((prev) => {
       const n = [...prev];
       n[i] = ch;
       return n;
     });
     if (ch) {
-      const next = document.querySelector<HTMLInputElement>(`input[data-cell="${i + 1}"]`);
+      const next = document.querySelector<HTMLInputElement>(`input[data-manual="${i + 1}"]`);
       next?.focus();
     }
   }
@@ -91,7 +100,8 @@ function WordAssistant() {
         r.readAsDataURL(file);
       });
       const { letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
-      setLetters(got);
+      setScanned(got);
+      setActive("scanned");
     } catch (err: any) {
       setError(err?.message ?? "Failed to read grid");
     } finally {
@@ -110,117 +120,158 @@ function WordAssistant() {
     return Array.from(g.entries()).sort((a, b) => b[0] - a[0]);
   }, [results]);
 
+  const showHover = (id: GridId) => (id === active ? hovered : null);
+
+  function GridBoard({
+    id,
+    letters,
+    editable,
+    label,
+  }: {
+    id: GridId;
+    letters: string[];
+    editable: boolean;
+    label: string;
+  }) {
+    const isActive = active === id;
+    const h = showHover(id);
+    return (
+      <div
+        onClick={() => setActive(id)}
+        className={[
+          "flex flex-col items-center gap-3 rounded-2xl p-4 transition-all cursor-pointer",
+          isActive ? "bg-white/5 ring-2 ring-pink-400" : "bg-white/[0.02] ring-1 ring-white/10",
+        ].join(" ")}
+      >
+        <div className="flex w-full items-center justify-between">
+          <span className="text-sm font-semibold uppercase tracking-wider text-pink-300">
+            {label}
+          </span>
+          {isActive && (
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-400">
+              Active
+            </span>
+          )}
+        </div>
+        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+          {letters.map((c, i) => {
+            const highlighted = h?.cells.includes(i);
+            const order = h ? h.cells.indexOf(i) : -1;
+            const base =
+              "h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
+            const tileColor = highlighted
+              ? "bg-white text-pink-600 shadow-lg scale-105"
+              : "bg-[#FF69B4] text-white hover:bg-[#ff4fa8] active:scale-95 shadow-md shadow-pink-500/30";
+            return (
+              <div key={i} className="relative">
+                {editable ? (
+                  <input
+                    data-manual={i}
+                    value={c}
+                    maxLength={1}
+                    onChange={(e) => setManualCell(i, e.target.value)}
+                    onFocus={(e) => {
+                      setActive("manual");
+                      e.target.select();
+                    }}
+                    className={`${base} ${tileColor}`}
+                  />
+                ) : (
+                  <div
+                    className={`${base} grid place-items-center ${
+                      c ? tileColor : "bg-white/10 text-white/40"
+                    }`}
+                  >
+                    {c || ""}
+                  </div>
+                )}
+                {highlighted && order >= 0 && (
+                  <span className="pointer-events-none absolute right-1 top-1 rounded-full bg-black/80 px-1.5 text-[10px] font-semibold text-pink-300">
+                    {order + 1}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5">
+    <div className="min-h-screen bg-black text-white">
+      <header className="border-b border-white/10">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5">
           <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground">
+            <div className="grid h-8 w-8 place-items-center rounded-md bg-[#FF69B4] text-white">
               <Sparkles className="h-4 w-4" />
             </div>
             <h1 className="text-lg font-semibold tracking-tight">Grid Word Assistant</h1>
           </div>
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-white/60">
             {ready ? `${results.length.toLocaleString()} words` : "Loading dictionary…"}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-5xl gap-8 px-4 py-8 md:grid-cols-[auto_1fr]">
+      <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
         <section className="flex flex-col items-center gap-4">
-          <div
-            className="grid gap-2"
-            style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
-          >
-            {letters.map((c, i) => {
-              const highlighted = hovered?.cells.includes(i);
-              const order = hovered ? hovered.cells.indexOf(i) : -1;
-              return (
-                <div key={i} className="relative">
-                  <input
-                    data-cell={i}
-                    value={c}
-                    maxLength={1}
-                    onChange={(e) => setCell(i, e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    className={[
-                      "h-16 w-16 rounded-lg border text-center text-2xl font-bold uppercase transition-all sm:h-20 sm:w-20 sm:text-3xl",
-                      "focus:outline-none focus:ring-2 focus:ring-primary",
-                      highlighted
-                        ? "border-primary bg-primary text-primary-foreground shadow-lg scale-105"
-                        : "border-border bg-card text-card-foreground hover:border-primary/50",
-                    ].join(" ")}
-                  />
-                  {highlighted && order >= 0 && (
-                    <span className="pointer-events-none absolute right-1 top-1 rounded-full bg-background/90 px-1.5 text-[10px] font-semibold text-primary">
-                      {order + 1}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <GridBoard id="manual" letters={manual} editable label="Manual Grid" />
+            <GridBoard id="scanned" letters={scanned} editable={false} label="Scanned Grid" />
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-[#FF69B4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff4fa8] active:scale-95 disabled:opacity-50"
             >
-              {uploading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {uploading ? "Reading grid…" : "Upload grid photo"}
             </button>
             <button
-              onClick={() => setLetters(randomGrid())}
-              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent"
+              onClick={() => {
+                setManual(randomGrid());
+                setActive("manual");
+              }}
+              className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
               <Shuffle className="h-4 w-4" /> Random
             </button>
             <button
-              onClick={() => setLetters(Array(16).fill(""))}
-              className="rounded-md border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent"
+              onClick={() => {
+                if (active === "manual") setManual(EMPTY_GRID);
+                else setScanned(EMPTY_GRID);
+              }}
+              className="rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
-              Clear
+              Clear {active === "manual" ? "manual" : "scanned"}
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onFile}
-            />
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
           </div>
-          {error && (
-            <p className="max-w-xs text-center text-sm text-destructive">{error}</p>
-          )}
-          <p className="max-w-xs text-center text-xs text-muted-foreground">
-            Letters connect in all 8 directions (up, down, left, right, diagonals). Each
-            tile is used once per word.
+          {error && <p className="max-w-md text-center text-sm text-red-400">{error}</p>}
+          <p className="max-w-md text-center text-xs text-white/50">
+            Click a grid to make it active. Letters connect in all 8 directions; each tile is used
+            once per word.
           </p>
         </section>
 
         <section className="min-w-0">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-muted-foreground">
-              Found words {solving && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
+            <h2 className="text-sm font-semibold text-white/70">
+              Found words in {active === "manual" ? "Manual" : "Scanned"} grid{" "}
+              {solving && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
             </h2>
           </div>
-          {!ready && (
-            <p className="text-sm text-muted-foreground">Loading English dictionary…</p>
-          )}
+          {!ready && <p className="text-sm text-white/50">Loading English dictionary…</p>}
           {ready && results.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Fill every cell to see valid words.
-            </p>
+            <p className="text-sm text-white/50">Fill every cell to see valid words.</p>
           )}
           <div className="space-y-4">
             {grouped.map(([len, words]) => (
               <div key={len}>
-                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-pink-300">
                   {len} letters · {words.length}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -231,7 +282,7 @@ function WordAssistant() {
                       onMouseLeave={() => setHovered(null)}
                       onFocus={() => setHovered(p)}
                       onBlur={() => setHovered(null)}
-                      className="rounded-md border border-border bg-card px-2 py-1 text-sm font-medium capitalize transition-colors hover:border-primary hover:bg-accent"
+                      className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-sm font-medium capitalize text-white transition-colors hover:border-pink-400 hover:bg-pink-400/10"
                     >
                       {p.word}
                     </button>
