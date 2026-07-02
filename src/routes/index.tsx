@@ -269,6 +269,19 @@ function WordAssistant() {
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
           </div>
           {error && <p className="max-w-md text-center text-sm text-red-400">{error}</p>}
+          {uploadMs !== null && !uploading && (
+            <p className={`text-xs ${uploadMs < 2000 ? "text-green-400" : "text-yellow-400"}`}>
+              Scan completed in {uploadMs} ms {uploadMs < 2000 ? "✓ under 2s target" : "(over 2s target)"}
+            </p>
+          )}
+          {scanDebug && (
+            <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
+              <div className="mb-1 text-pink-300">Row/col mapping (verify against image):</div>
+              {scanDebug.map((r, i) => (
+                <div key={i}>row {i}: {r.join(" · ")}</div>
+              ))}
+            </div>
+          )}
           <p className="max-w-md text-center text-xs text-white/50">
             Click a grid to make it active. Letters connect in all 8 directions; each tile is used
             once per word.
