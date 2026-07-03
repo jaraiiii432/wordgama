@@ -495,6 +495,28 @@ function WordAssistant() {
               onChange={onFile}
             />
           </div>
+
+          {/* Live sync viewport — hidden until active */}
+          <div className={liveOn ? "flex flex-col items-center gap-2" : "hidden"}>
+            <div className="relative w-full max-w-xs overflow-hidden rounded-lg border-2 border-red-500 bg-black">
+              <video ref={videoRef} className="w-full" muted playsInline />
+              <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-400">
+                <span className={`h-2 w-2 rounded-full bg-red-500 ${liveStatus === "scanning" ? "animate-pulse" : ""}`} />
+                {liveStatus === "scanning" ? "Scanning…" : "Live"}
+              </div>
+            </div>
+            <p className="text-xs text-white/70">
+              {lastSyncAt
+                ? `Synced ${Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago`
+                : "Waiting for first scan…"}
+            </p>
+          </div>
+          {/* Hidden video ref holder for when liveOn is false (keeps ref stable) */}
+          {!liveOn && <video ref={videoRef} className="hidden" muted playsInline />}
+
+          {liveError && (
+            <p className="max-w-md text-center text-sm text-red-400">{liveError}</p>
+          )}
           {error && (
             <p className="max-w-md text-center text-sm text-red-400 whitespace-pre-wrap">{error}</p>
           )}
