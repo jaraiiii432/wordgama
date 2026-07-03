@@ -418,6 +418,22 @@ function WordAssistant() {
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
+            {!liveOn ? (
+              <button
+                onClick={startLiveSync}
+                disabled={uploading}
+                className="inline-flex items-center gap-2 rounded-md bg-red-500 px-3 py-2 text-sm font-semibold text-white hover:bg-red-400 active:scale-95 disabled:opacity-50"
+              >
+                <Radio className="h-4 w-4" /> Start Live Sync
+              </button>
+            ) : (
+              <button
+                onClick={stopLiveSync}
+                className="inline-flex items-center gap-2 rounded-md bg-white text-black px-3 py-2 text-sm font-semibold hover:bg-white/90 active:scale-95"
+              >
+                <StopCircle className="h-4 w-4" /> Stop Live Sync
+              </button>
+            )}
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
