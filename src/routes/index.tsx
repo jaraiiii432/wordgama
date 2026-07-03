@@ -529,6 +529,8 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
+                setTopWords(null);
+                setTrace(null);
                 setManual(randomGrid());
                 setActive("manual");
               }}
@@ -541,6 +543,7 @@ function WordAssistant() {
                 setManual(EMPTY_GRID);
                 setActive("manual");
                 setTopWords(null);
+                setTrace(null);
               }}
               className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -549,7 +552,9 @@ function WordAssistant() {
             <button
               onClick={() => {
                 setScanned(EMPTY_GRID);
+                scannedRef.current = EMPTY_GRID;
                 setScanDebug(null);
+                setTrace(null);
               }}
               className="rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -610,7 +615,7 @@ function WordAssistant() {
         <section className="min-w-0">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white/70">
-              {topWords ? "Top 10 words (Generate)" : `Found words in ${active === "manual" ? "Manual" : "Scanned"} grid`}{" "}
+              {topWords ? `Top ${topWords.length} words (Generate)` : `Found words in ${active === "manual" ? "Manual" : "Scanned"} grid`}{" "}
               {solving && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
             </h2>
           </div>
@@ -627,6 +632,7 @@ function WordAssistant() {
                     key={p.word}
                     onMouseEnter={() => setHovered(p)}
                     onMouseLeave={() => setHovered(null)}
+                    onClick={() => void autoTrace(p, "manual")}
                     className="rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-sm font-medium capitalize text-emerald-100"
                   >
                     {p.word}
@@ -653,6 +659,7 @@ function WordAssistant() {
                       onMouseLeave={() => setHovered(null)}
                       onFocus={() => setHovered(p)}
                       onBlur={() => setHovered(null)}
+                      onClick={() => void autoTrace(p, active)}
                       className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-sm font-medium capitalize text-white transition-colors hover:border-pink-400 hover:bg-pink-400/10"
                     >
                       {p.word}
