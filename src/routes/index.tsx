@@ -109,9 +109,27 @@ function WordAssistant() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const extract = useServerFn(extractGrid);
 
+  // ----- Live Sync state -----
+  const [liveOn, setLiveOn] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<"idle" | "starting" | "watching" | "scanning">("idle");
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState<number>(Date.now());
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanningRef = useRef(false);
+  const liveOnRef = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     loadTrie().then(() => setReady(true));
   }, []);
+
+  useEffect(() => {
+    if (!liveOn) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [liveOn]);
 
   const activeLetters = active === "manual" ? manual : scanned;
   const grid = useMemo(
