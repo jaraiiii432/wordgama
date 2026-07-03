@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
-import { loadTrie, solve, type Path } from "@/lib/solver";
+import { filterValidPaths, loadTrie, solve, type DictionaryTrie, type Path } from "@/lib/solver";
 import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/")({
 
 const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
 const EMPTY_GRID = Array(16).fill("");
+const DISPLAY_LIMIT = 50;
 
 function randomGrid(): string[] {
   const dice = "AAAAAABBCCDDEEEEEEFFGGHHIIIIJKLLMMNNNNOOOOPPQRRRSSSSTTTTUUVVWWXYYZ";
@@ -33,6 +34,7 @@ function randomGrid(): string[] {
 }
 
 type GridId = "manual" | "scanned";
+type TraceState = { gridId: GridId; path: Path; step: number; locked: boolean };
 
 // Robust image → JPEG data URL. Handles HEIC/HEIC-ish by falling back to <img> decode.
 async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
@@ -105,8 +107,11 @@ function WordAssistant() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<Path | null>(null);
+  const [trace, setTrace] = useState<TraceState | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const trieRef = useRef<DictionaryTrie | null>(null);
+  const traceRunRef = useRef(0);
   const extract = useServerFn(extractGrid);
 
   // ----- Live Sync state -----
@@ -120,10 +125,18 @@ function WordAssistant() {
   const scanningRef = useRef(false);
   const liveOnRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scannedRef = useRef<string[]>(scanned);
 
   useEffect(() => {
-    loadTrie().then(() => setReady(true));
+    loadTrie().then((trie) => {
+      trieRef.current = trie;
+      setReady(true);
+    });
   }, []);
+
+  useEffect(() => {
+    scannedRef.current = scanned;
+  }, [scanned]);
 
   useEffect(() => {
     if (!liveOn) return;
@@ -147,7 +160,8 @@ function WordAssistant() {
     setSolving(true);
     const id = setTimeout(() => {
       loadTrie().then((trie) => {
-        setResults(solve(grid, trie));
+        trieRef.current = trie;
+        setResults(filterValidPaths(solve(grid, trie), trie));
         setSolving(false);
       });
     }, 10);
@@ -157,6 +171,8 @@ function WordAssistant() {
   function setManualCell(i: number, v: string) {
     const ch = v.slice(-1).toUpperCase();
     if (ch && !/[A-Z]/.test(ch)) return;
+    setTopWords(null);
+    setTrace(null);
     setManual((prev) => {
       const n = [...prev];
       n[i] = ch;
