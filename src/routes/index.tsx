@@ -152,7 +152,6 @@ function WordAssistant() {
 
   useEffect(() => {
     if (!ready) return;
-    setTopWords(null);
     if (grid.some((c) => !/[a-z]/.test(c))) {
       setResults([]);
       return;
@@ -382,6 +381,11 @@ function WordAssistant() {
   }) {
     const isActive = active === id;
     const h = showHover(id);
+    const traceForBoard = trace?.gridId === id ? trace : null;
+    const traceCells = traceForBoard ? traceForBoard.path.cells.slice(0, traceForBoard.step) : [];
+    const tracePoints = traceCells
+      .map((idx) => `${(idx % 4) * 25 + 12.5},${Math.floor(idx / 4) * 25 + 12.5}`)
+      .join(" ");
     return (
       <div
         onClick={() => setActive(id)}
@@ -400,14 +404,29 @@ function WordAssistant() {
             </span>
           )}
         </div>
-        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <div className="relative grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+          {tracePoints && (
+            <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <polyline
+                points={tracePoints}
+                fill="none"
+                stroke={traceForBoard?.locked ? "#FBBF24" : "#FF69B4"}
+                strokeWidth="3.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
           {letters.map((c, i) => {
-            const highlighted = h?.cells.includes(i);
-            const order = h ? h.cells.indexOf(i) : -1;
+            const traced = traceCells.includes(i);
+            const highlighted = traced || h?.cells.includes(i);
+            const order = traced ? traceCells.indexOf(i) : h ? h.cells.indexOf(i) : -1;
             const base =
-              "h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
+              "relative z-10 h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
             const tileColor = highlighted
-              ? "bg-white text-pink-600 shadow-lg scale-105"
+              ? traceForBoard?.locked
+                ? "bg-amber-300 text-black shadow-lg shadow-amber-300/40 scale-105"
+                : "bg-white text-pink-600 shadow-lg scale-105"
               : "bg-[#FF69B4] text-white hover:bg-[#ff4fa8] active:scale-95 shadow-md shadow-pink-500/30";
             return (
               <div key={i} className="relative">
