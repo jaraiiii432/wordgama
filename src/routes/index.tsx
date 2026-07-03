@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
 import { loadTrie, solve, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: WordAssistant,
@@ -109,9 +109,27 @@ function WordAssistant() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const extract = useServerFn(extractGrid);
 
+  // ----- Live Sync state -----
+  const [liveOn, setLiveOn] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<"idle" | "starting" | "watching" | "scanning">("idle");
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState<number>(Date.now());
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanningRef = useRef(false);
+  const liveOnRef = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     loadTrie().then(() => setReady(true));
   }, []);
+
+  useEffect(() => {
+    if (!liveOn) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [liveOn]);
 
   const activeLetters = active === "manual" ? manual : scanned;
   const grid = useMemo(
@@ -182,6 +200,95 @@ function WordAssistant() {
     e.target.value = "";
     if (file) await processFile(file);
   }
+
+  async function captureFrameJpeg(maxDim = 512): Promise<string | null> {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+    const w = video.videoWidth, h = video.videoHeight;
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    const dw = Math.max(1, Math.round(w * scale));
+    const dh = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = dw; canvas.height = dh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, dw, dh);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
+  async function liveTick() {
+    if (!liveOnRef.current || scanningRef.current) return;
+    scanningRef.current = true;
+    setLiveStatus("scanning");
+    try {
+      const dataUrl = await captureFrameJpeg(512);
+      if (!dataUrl) return;
+      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      // Diff: only replace changed tiles
+      setScanned((prev) => {
+        const next = [...prev];
+        let changed = 0;
+        for (let i = 0; i < 16; i++) {
+          const nc = (got[i] || "").toUpperCase();
+          if (nc && nc !== (prev[i] || "").toUpperCase()) {
+            next[i] = nc;
+            changed++;
+          }
+        }
+        console.log("[live] diff — changed", changed, "tiles");
+        return changed > 0 ? next : prev;
+      });
+      setScanDebug(rows);
+      setLastSyncAt(Date.now());
+      setActive("scanned");
+    } catch (err: any) {
+      console.error("[live] scan failed:", err);
+      setLiveError(err?.message ?? "Live scan failed");
+    } finally {
+      scanningRef.current = false;
+      if (liveOnRef.current) setLiveStatus("watching");
+    }
+  }
+
+  async function startLiveSync() {
+    setLiveError(null);
+    setLiveStatus("starting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      // Attach to a video element (created via ref in JSX below).
+      const video = videoRef.current!;
+      video.srcObject = stream;
+      video.setAttribute("playsinline", "true");
+      await video.play();
+      liveOnRef.current = true;
+      setLiveOn(true);
+      setLiveStatus("watching");
+      // Fire first scan immediately, then every 2.5s.
+      liveTick();
+      intervalRef.current = setInterval(liveTick, 2500);
+    } catch (err: any) {
+      console.error("[live] start failed:", err);
+      setLiveError(err?.message ?? "Could not start camera");
+      setLiveStatus("idle");
+      stopLiveSync();
+    }
+  }
+
+  function stopLiveSync() {
+    liveOnRef.current = false;
+    setLiveOn(false);
+    setLiveStatus("idle");
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    const s = streamRef.current;
+    if (s) { s.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }
+
+  useEffect(() => () => stopLiveSync(), []);
 
   const grouped = useMemo(() => {
     const g = new Map<number, Path[]>();
@@ -311,6 +418,22 @@ function WordAssistant() {
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
+            {!liveOn ? (
+              <button
+                onClick={startLiveSync}
+                disabled={uploading}
+                className="inline-flex items-center gap-2 rounded-md bg-red-500 px-3 py-2 text-sm font-semibold text-white hover:bg-red-400 active:scale-95 disabled:opacity-50"
+              >
+                <Radio className="h-4 w-4" /> Start Live Sync
+              </button>
+            ) : (
+              <button
+                onClick={stopLiveSync}
+                className="inline-flex items-center gap-2 rounded-md bg-white text-black px-3 py-2 text-sm font-semibold hover:bg-white/90 active:scale-95"
+              >
+                <StopCircle className="h-4 w-4" /> Stop Live Sync
+              </button>
+            )}
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
@@ -372,6 +495,26 @@ function WordAssistant() {
               onChange={onFile}
             />
           </div>
+
+          {/* Video element always mounted so ref stays stable; hidden when not live */}
+          <div className={liveOn ? "flex flex-col items-center gap-2" : "hidden"}>
+            <div className="relative w-full max-w-xs overflow-hidden rounded-lg border-2 border-red-500 bg-black">
+              <video ref={videoRef} className="w-full" muted playsInline />
+              <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-400">
+                <span className={`h-2 w-2 rounded-full bg-red-500 ${liveStatus === "scanning" ? "animate-pulse" : ""}`} />
+                {liveStatus === "scanning" ? "Scanning…" : "Live"}
+              </div>
+            </div>
+            <p className="text-xs text-white/70">
+              {lastSyncAt
+                ? `Synced ${Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago`
+                : "Waiting for first scan…"}
+            </p>
+          </div>
+
+          {liveError && (
+            <p className="max-w-md text-center text-sm text-red-400">{liveError}</p>
+          )}
           {error && (
             <p className="max-w-md text-center text-sm text-red-400 whitespace-pre-wrap">{error}</p>
           )}
