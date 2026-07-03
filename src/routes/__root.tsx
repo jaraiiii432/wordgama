@@ -77,14 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Da word gama" },
+      { name: "description", content: "Some 2 make some pape out of, yk? Enjoy nig nogz, xoxo" },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Da word gama" },
+      { property: "og:description", content: "Some 2 make some pape out of, yk? Enjoy nig nogz, xoxo" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Da word gama" },
+      { name: "twitter:description", content: "Some 2 make some pape out of, yk? Enjoy nig nogz, xoxo" },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/09riDBVKGtfgmDMScbPgVEpKTH13/social-images/social-1783133244065-1000006632.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/09riDBVKGtfgmDMScbPgVEpKTH13/social-images/social-1783133244065-1000006632.webp" },
     ],
     links: [
       {
