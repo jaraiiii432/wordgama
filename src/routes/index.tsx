@@ -278,23 +278,20 @@ function WordAssistant() {
       const dataUrl = await captureFrameJpeg(512);
       if (!dataUrl) return;
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
-      // Diff: only replace changed tiles
-      setScanned((prev) => {
-        const next = [...prev];
-        let changed = 0;
-        for (let i = 0; i < 16; i++) {
-          const nc = (got[i] || "").toUpperCase();
-          if (nc && nc !== (prev[i] || "").toUpperCase()) {
-            next[i] = nc;
-            changed++;
-          }
-        }
-        console.log("[live] diff — changed", changed, "tiles");
-        return changed > 0 ? next : prev;
-      });
+      const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
+      console.log("[live] diff — changed", changed, "tiles");
+      if (changed > 0) {
+        scannedRef.current = next;
+        setScanned(next);
+        setManual(next);
+        setActive("manual");
+        const valid = await solveValidated(next);
+        setResults(valid);
+        setTopWords(valid.slice(0, DISPLAY_LIMIT));
+        if (valid[0]) void autoTrace(valid[0], "manual");
+      }
       setScanDebug(rows);
       setLastSyncAt(Date.now());
-      setActive("scanned");
     } catch (err: any) {
       console.error("[live] scan failed:", err);
       setLiveError(err?.message ?? "Live scan failed");
