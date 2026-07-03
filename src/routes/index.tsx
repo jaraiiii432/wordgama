@@ -187,6 +187,41 @@ function WordAssistant() {
   const [uploadMs, setUploadMs] = useState<number | null>(null);
   const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
 
+  async function solveValidated(letters: string[]): Promise<Path[]> {
+    const trie = trieRef.current ?? (await loadTrie());
+    trieRef.current = trie;
+    const normalized = letters.map((c) => (c || "").toLowerCase());
+    if (normalized.some((c) => !/^[a-z]$/.test(c))) return [];
+    return filterValidPaths(solve(normalized, trie), trie);
+  }
+
+  function mergeDetectedLetters(previous: string[], detected: string[]) {
+    const next = [...previous];
+    let changed = 0;
+    for (let i = 0; i < 16; i++) {
+      const nc = (detected[i] || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 1);
+      if (nc && nc !== (previous[i] || "").toUpperCase()) {
+        next[i] = nc;
+        changed++;
+      }
+    }
+    return { next, changed };
+  }
+
+  async function autoTrace(path: Path, gridId: GridId = "manual") {
+    const run = ++traceRunRef.current;
+    setHovered(null);
+    setActive(gridId);
+    for (let step = 1; step <= path.cells.length; step++) {
+      if (run !== traceRunRef.current) return;
+      setTrace({ gridId, path, step, locked: false });
+      await new Promise((resolve) => setTimeout(resolve, 140));
+    }
+    if (run === traceRunRef.current) {
+      setTrace({ gridId, path, step: path.cells.length, locked: true });
+    }
+  }
+
   async function processFile(file: File) {
     setError(null);
     setUploading(true);
@@ -197,8 +232,11 @@ function WordAssistant() {
       const dataUrl = await fileToJpegDataUrl(file, 512);
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       setScanned(got);
+      scannedRef.current = got;
       setScanDebug(rows);
       setActive("scanned");
+      setTopWords(null);
+      setTrace(null);
       console.log("[OCR] Row/col mapping:");
       rows.forEach((r, i) => console.log(`  row ${i}:`, r.join(" ")));
     } catch (err: any) {
