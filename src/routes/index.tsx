@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
 import { loadTrie, solve, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: WordAssistant,
@@ -34,17 +34,79 @@ function randomGrid(): string[] {
 
 type GridId = "manual" | "scanned";
 
+// Robust image → JPEG data URL. Handles HEIC/HEIC-ish by falling back to <img> decode.
+async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
+  if (!file) throw new Error("No file selected");
+  if (file.size === 0) throw new Error("File is empty (0 bytes) — the camera capture failed. Try again.");
+  if (file.size > 25 * 1024 * 1024) throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max 25 MB.`);
+
+  const name = (file.name || "").toLowerCase();
+  const type = (file.type || "").toLowerCase();
+  const isHeic = /heic|heif/.test(type) || /\.(heic|heif)$/.test(name);
+
+  async function drawToJpeg(source: CanvasImageSource, w: number, h: number): Promise<string> {
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    const dw = Math.max(1, Math.round(w * scale));
+    const dh = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 2D context unavailable");
+    ctx.drawImage(source, 0, 0, dw, dh);
+    const url = canvas.toDataURL("image/jpeg", 0.8);
+    if (!url || url.length < 100) throw new Error("Canvas produced an empty JPEG");
+    return url;
+  }
+
+  // Path 1: createImageBitmap (fast; supports JPEG/PNG/WebP; Safari 17+ supports HEIC).
+  try {
+    const bmp = await createImageBitmap(file);
+    const url = await drawToJpeg(bmp, bmp.width, bmp.height);
+    bmp.close?.();
+    return url;
+  } catch (err) {
+    console.warn("[decode] createImageBitmap failed, falling back to <img>:", err);
+  }
+
+  // Path 2: HTMLImageElement via object URL (works for anything the browser can render).
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () =>
+        reject(
+          new Error(
+            isHeic
+              ? "Your phone saved this photo as HEIC, which this browser can't decode. In iPhone Settings → Camera → Formats, switch to 'Most Compatible', or retake as JPEG."
+              : `Browser could not decode this image (type: ${type || "unknown"}).`,
+          ),
+        );
+      el.src = objectUrl;
+    });
+    if (!img.naturalWidth || !img.naturalHeight) {
+      throw new Error("Decoded image has zero dimensions — the file is likely truncated.");
+    }
+    return await drawToJpeg(img, img.naturalWidth, img.naturalHeight);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function WordAssistant() {
   const [manual, setManual] = useState<string[]>(DEFAULT_GRID);
   const [scanned, setScanned] = useState<string[]>(EMPTY_GRID);
   const [active, setActive] = useState<GridId>("manual");
   const [results, setResults] = useState<Path[]>([]);
+  const [topWords, setTopWords] = useState<Path[] | null>(null);
   const [ready, setReady] = useState(false);
   const [solving, setSolving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<Path | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const extract = useServerFn(extractGrid);
 
   useEffect(() => {
@@ -59,6 +121,7 @@ function WordAssistant() {
 
   useEffect(() => {
     if (!ready) return;
+    setTopWords(null);
     if (grid.some((c) => !/[a-z]/.test(c))) {
       setResults([]);
       return;
@@ -90,29 +153,14 @@ function WordAssistant() {
   const [uploadMs, setUploadMs] = useState<number | null>(null);
   const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
 
-  async function resizeImage(file: File, maxDim = 512): Promise<string> {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-    const w = Math.round(bitmap.width * scale);
-    const h = Math.round(bitmap.height * scale);
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close?.();
-    return canvas.toDataURL("image/jpeg", 0.8);
-  }
-
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processFile(file: File) {
     setError(null);
     setUploading(true);
     setUploadMs(null);
     const t0 = performance.now();
     try {
-      const dataUrl = await resizeImage(file, 512);
+      console.log("[upload] file:", { name: file.name, type: file.type, size: file.size });
+      const dataUrl = await fileToJpegDataUrl(file, 512);
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       setScanned(got);
       setScanDebug(rows);
@@ -120,12 +168,19 @@ function WordAssistant() {
       console.log("[OCR] Row/col mapping:");
       rows.forEach((r, i) => console.log(`  row ${i}:`, r.join(" ")));
     } catch (err: any) {
-      setError(err?.message ?? "Failed to read grid");
+      const msg = err?.message ?? String(err) ?? "Failed to read grid";
+      console.error("[upload] failed:", err);
+      setError(msg);
     } finally {
       setUploadMs(Math.round(performance.now() - t0));
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) await processFile(file);
   }
 
   const grouped = useMemo(() => {
@@ -139,6 +194,22 @@ function WordAssistant() {
   }, [results]);
 
   const showHover = (id: GridId) => (id === active ? hovered : null);
+
+  async function generateFromScanned() {
+    setError(null);
+    if (scanned.some((c) => !/[A-Za-z]/.test(c))) {
+      setError("Scanned grid is empty — scan a photo first.");
+      return;
+    }
+    const copy = scanned.map((c) => (c || "").toUpperCase());
+    setManual(copy);
+    setActive("manual");
+    const trie = await loadTrie();
+    const lower = copy.map((c) => c.toLowerCase());
+    const all = solve(lower, trie);
+    setResults(all);
+    setTopWords(all.slice(0, 10));
+  }
 
   function GridBoard({
     id,
@@ -249,6 +320,21 @@ function WordAssistant() {
               {uploading ? "Reading grid…" : "Upload grid photo"}
             </button>
             <button
+              onClick={() => cameraRef.current?.click()}
+              disabled={uploading}
+              className="inline-flex items-center gap-2 rounded-md bg-[#FF69B4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff4fa8] active:scale-95 disabled:opacity-50"
+            >
+              <Camera className="h-4 w-4" />
+              Upload new grid
+            </button>
+            <button
+              onClick={generateFromScanned}
+              disabled={uploading}
+              className="inline-flex items-center gap-2 rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-black hover:bg-emerald-400 active:scale-95 disabled:opacity-50"
+            >
+              <Wand2 className="h-4 w-4" /> Generate
+            </button>
+            <button
               onClick={() => {
                 setManual(randomGrid());
                 setActive("manual");
@@ -259,17 +345,37 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
-                if (active === "manual") setManual(EMPTY_GRID);
-                else setScanned(EMPTY_GRID);
+                setManual(EMPTY_GRID);
+                setActive("manual");
+                setTopWords(null);
+              }}
+              className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
+            >
+              <Eraser className="h-4 w-4" /> Clear grid
+            </button>
+            <button
+              onClick={() => {
+                setScanned(EMPTY_GRID);
+                setScanDebug(null);
               }}
               className="rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
-              Clear {active === "manual" ? "manual" : "scanned"}
+              Clear scanned
             </button>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={onFile}
+            />
           </div>
-          {error && <p className="max-w-md text-center text-sm text-red-400">{error}</p>}
-          {uploadMs !== null && !uploading && (
+          {error && (
+            <p className="max-w-md text-center text-sm text-red-400 whitespace-pre-wrap">{error}</p>
+          )}
+          {uploadMs !== null && !uploading && !error && (
             <p className={`text-xs ${uploadMs < 2000 ? "text-green-400" : "text-yellow-400"}`}>
               Scan completed in {uploadMs} ms {uploadMs < 2000 ? "✓ under 2s target" : "(over 2s target)"}
             </p>
@@ -284,18 +390,39 @@ function WordAssistant() {
           )}
           <p className="max-w-md text-center text-xs text-white/50">
             Click a grid to make it active. Letters connect in all 8 directions; each tile is used
-            once per word.
+            once per word. All words are validated against a local English dictionary.
           </p>
         </section>
 
         <section className="min-w-0">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white/70">
-              Found words in {active === "manual" ? "Manual" : "Scanned"} grid{" "}
+              {topWords ? "Top 10 words (Generate)" : `Found words in ${active === "manual" ? "Manual" : "Scanned"} grid`}{" "}
               {solving && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
             </h2>
           </div>
           {!ready && <p className="text-sm text-white/50">Loading English dictionary…</p>}
+
+          {topWords && (
+            <div className="mb-4 rounded-md border border-emerald-400/40 bg-emerald-400/5 p-3">
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-300">
+                Top {topWords.length} · longest first
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {topWords.map((p) => (
+                  <button
+                    key={p.word}
+                    onMouseEnter={() => setHovered(p)}
+                    onMouseLeave={() => setHovered(null)}
+                    className="rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-sm font-medium capitalize text-emerald-100"
+                  >
+                    {p.word}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {ready && results.length === 0 && (
             <p className="text-sm text-white/50">Fill every cell to see valid words.</p>
           )}
