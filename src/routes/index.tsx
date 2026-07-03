@@ -201,6 +201,95 @@ function WordAssistant() {
     if (file) await processFile(file);
   }
 
+  async function captureFrameJpeg(maxDim = 512): Promise<string | null> {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+    const w = video.videoWidth, h = video.videoHeight;
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    const dw = Math.max(1, Math.round(w * scale));
+    const dh = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = dw; canvas.height = dh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, dw, dh);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
+  async function liveTick() {
+    if (!liveOnRef.current || scanningRef.current) return;
+    scanningRef.current = true;
+    setLiveStatus("scanning");
+    try {
+      const dataUrl = await captureFrameJpeg(512);
+      if (!dataUrl) return;
+      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      // Diff: only replace changed tiles
+      setScanned((prev) => {
+        const next = [...prev];
+        let changed = 0;
+        for (let i = 0; i < 16; i++) {
+          const nc = (got[i] || "").toUpperCase();
+          if (nc && nc !== (prev[i] || "").toUpperCase()) {
+            next[i] = nc;
+            changed++;
+          }
+        }
+        console.log("[live] diff — changed", changed, "tiles");
+        return changed > 0 ? next : prev;
+      });
+      setScanDebug(rows);
+      setLastSyncAt(Date.now());
+      setActive("scanned");
+    } catch (err: any) {
+      console.error("[live] scan failed:", err);
+      setLiveError(err?.message ?? "Live scan failed");
+    } finally {
+      scanningRef.current = false;
+      if (liveOnRef.current) setLiveStatus("watching");
+    }
+  }
+
+  async function startLiveSync() {
+    setLiveError(null);
+    setLiveStatus("starting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      // Attach to a video element (created via ref in JSX below).
+      const video = videoRef.current!;
+      video.srcObject = stream;
+      video.setAttribute("playsinline", "true");
+      await video.play();
+      liveOnRef.current = true;
+      setLiveOn(true);
+      setLiveStatus("watching");
+      // Fire first scan immediately, then every 2.5s.
+      liveTick();
+      intervalRef.current = setInterval(liveTick, 2500);
+    } catch (err: any) {
+      console.error("[live] start failed:", err);
+      setLiveError(err?.message ?? "Could not start camera");
+      setLiveStatus("idle");
+      stopLiveSync();
+    }
+  }
+
+  function stopLiveSync() {
+    liveOnRef.current = false;
+    setLiveOn(false);
+    setLiveStatus("idle");
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    const s = streamRef.current;
+    if (s) { s.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }
+
+  useEffect(() => () => stopLiveSync(), []);
+
   const grouped = useMemo(() => {
     const g = new Map<number, Path[]>();
     for (const p of results) {
