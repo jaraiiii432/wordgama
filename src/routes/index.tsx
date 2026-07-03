@@ -496,7 +496,7 @@ function WordAssistant() {
             />
           </div>
 
-          {/* Live sync viewport — hidden until active */}
+          {/* Video element always mounted so ref stays stable; hidden when not live */}
           <div className={liveOn ? "flex flex-col items-center gap-2" : "hidden"}>
             <div className="relative w-full max-w-xs overflow-hidden rounded-lg border-2 border-red-500 bg-black">
               <video ref={videoRef} className="w-full" muted playsInline />
@@ -511,8 +511,6 @@ function WordAssistant() {
                 : "Waiting for first scan…"}
             </p>
           </div>
-          {/* Hidden video ref holder for when liveOn is false (keeps ref stable) */}
-          {!liveOn && <video ref={videoRef} className="hidden" muted playsInline />}
 
           {liveError && (
             <p className="max-w-md text-center text-sm text-red-400">{liveError}</p>
