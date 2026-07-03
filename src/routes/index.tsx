@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
 import { loadTrie, solve, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: WordAssistant,
