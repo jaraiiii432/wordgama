@@ -6,10 +6,33 @@ type TrieNode = {
   word?: string;
 };
 
+export type DictionaryTrie = TrieNode;
+
+export function normalizeWord(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z]/g, "");
+}
+
+export function isValidDictionaryWord(raw: string, trie: TrieNode): boolean {
+  const word = normalizeWord(raw);
+  if (word.length < 3) return false;
+
+  let node: TrieNode | undefined = trie;
+  for (const ch of word) {
+    node = node.children.get(ch);
+    if (!node) return false;
+  }
+
+  return node.word === word;
+}
+
+export function filterValidPaths(paths: Path[], trie: TrieNode): Path[] {
+  return paths.filter((path) => isValidDictionaryWord(path.word, trie));
+}
+
 export function buildTrie(words: string[]): TrieNode {
   const root: TrieNode = { children: new Map() };
   for (const raw of words) {
-    const w = raw.toLowerCase();
+    const w = normalizeWord(raw);
     if (w.length < 3) continue;
     let node = root;
     for (const ch of w) {
@@ -46,7 +69,7 @@ export function solve(grid: string[], trie: TrieNode): Path[] {
     if (!next) return;
     path.push(idx);
     used[idx] = true;
-    if (next.word && !found.has(next.word)) {
+    if (next.word && isValidDictionaryWord(next.word, trie) && !found.has(next.word)) {
       found.set(next.word, [...path]);
     }
     for (const [dr, dc] of NEIGHBORS) {

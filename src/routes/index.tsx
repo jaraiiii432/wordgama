@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
-import { loadTrie, solve, type Path } from "@/lib/solver";
+import { filterValidPaths, loadTrie, solve, type DictionaryTrie, type Path } from "@/lib/solver";
 import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/")({
 
 const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
 const EMPTY_GRID = Array(16).fill("");
+const DISPLAY_LIMIT = 50;
 
 function randomGrid(): string[] {
   const dice = "AAAAAABBCCDDEEEEEEFFGGHHIIIIJKLLMMNNNNOOOOPPQRRRSSSSTTTTUUVVWWXYYZ";
@@ -33,6 +34,7 @@ function randomGrid(): string[] {
 }
 
 type GridId = "manual" | "scanned";
+type TraceState = { gridId: GridId; path: Path; step: number; locked: boolean };
 
 // Robust image → JPEG data URL. Handles HEIC/HEIC-ish by falling back to <img> decode.
 async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
@@ -105,8 +107,11 @@ function WordAssistant() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<Path | null>(null);
+  const [trace, setTrace] = useState<TraceState | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const trieRef = useRef<DictionaryTrie | null>(null);
+  const traceRunRef = useRef(0);
   const extract = useServerFn(extractGrid);
 
   // ----- Live Sync state -----
@@ -120,10 +125,18 @@ function WordAssistant() {
   const scanningRef = useRef(false);
   const liveOnRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scannedRef = useRef<string[]>(scanned);
 
   useEffect(() => {
-    loadTrie().then(() => setReady(true));
+    loadTrie().then((trie) => {
+      trieRef.current = trie;
+      setReady(true);
+    });
   }, []);
+
+  useEffect(() => {
+    scannedRef.current = scanned;
+  }, [scanned]);
 
   useEffect(() => {
     if (!liveOn) return;
@@ -139,7 +152,6 @@ function WordAssistant() {
 
   useEffect(() => {
     if (!ready) return;
-    setTopWords(null);
     if (grid.some((c) => !/[a-z]/.test(c))) {
       setResults([]);
       return;
@@ -147,7 +159,8 @@ function WordAssistant() {
     setSolving(true);
     const id = setTimeout(() => {
       loadTrie().then((trie) => {
-        setResults(solve(grid, trie));
+        trieRef.current = trie;
+        setResults(filterValidPaths(solve(grid, trie), trie));
         setSolving(false);
       });
     }, 10);
@@ -157,6 +170,8 @@ function WordAssistant() {
   function setManualCell(i: number, v: string) {
     const ch = v.slice(-1).toUpperCase();
     if (ch && !/[A-Z]/.test(ch)) return;
+    setTopWords(null);
+    setTrace(null);
     setManual((prev) => {
       const n = [...prev];
       n[i] = ch;
@@ -171,6 +186,41 @@ function WordAssistant() {
   const [uploadMs, setUploadMs] = useState<number | null>(null);
   const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
 
+  async function solveValidated(letters: string[]): Promise<Path[]> {
+    const trie = trieRef.current ?? (await loadTrie());
+    trieRef.current = trie;
+    const normalized = letters.map((c) => (c || "").toLowerCase());
+    if (normalized.some((c) => !/^[a-z]$/.test(c))) return [];
+    return filterValidPaths(solve(normalized, trie), trie);
+  }
+
+  function mergeDetectedLetters(previous: string[], detected: string[]) {
+    const next = [...previous];
+    let changed = 0;
+    for (let i = 0; i < 16; i++) {
+      const nc = (detected[i] || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 1);
+      if (nc && nc !== (previous[i] || "").toUpperCase()) {
+        next[i] = nc;
+        changed++;
+      }
+    }
+    return { next, changed };
+  }
+
+  async function autoTrace(path: Path, gridId: GridId = "manual") {
+    const run = ++traceRunRef.current;
+    setHovered(null);
+    setActive(gridId);
+    for (let step = 1; step <= path.cells.length; step++) {
+      if (run !== traceRunRef.current) return;
+      setTrace({ gridId, path, step, locked: false });
+      await new Promise((resolve) => setTimeout(resolve, 140));
+    }
+    if (run === traceRunRef.current) {
+      setTrace({ gridId, path, step: path.cells.length, locked: true });
+    }
+  }
+
   async function processFile(file: File) {
     setError(null);
     setUploading(true);
@@ -181,8 +231,11 @@ function WordAssistant() {
       const dataUrl = await fileToJpegDataUrl(file, 512);
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       setScanned(got);
+      scannedRef.current = got;
       setScanDebug(rows);
       setActive("scanned");
+      setTopWords(null);
+      setTrace(null);
       console.log("[OCR] Row/col mapping:");
       rows.forEach((r, i) => console.log(`  row ${i}:`, r.join(" ")));
     } catch (err: any) {
@@ -224,23 +277,20 @@ function WordAssistant() {
       const dataUrl = await captureFrameJpeg(512);
       if (!dataUrl) return;
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
-      // Diff: only replace changed tiles
-      setScanned((prev) => {
-        const next = [...prev];
-        let changed = 0;
-        for (let i = 0; i < 16; i++) {
-          const nc = (got[i] || "").toUpperCase();
-          if (nc && nc !== (prev[i] || "").toUpperCase()) {
-            next[i] = nc;
-            changed++;
-          }
-        }
-        console.log("[live] diff — changed", changed, "tiles");
-        return changed > 0 ? next : prev;
-      });
+      const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
+      console.log("[live] diff — changed", changed, "tiles");
+      if (changed > 0) {
+        scannedRef.current = next;
+        setScanned(next);
+        setManual(next);
+        setActive("manual");
+        const valid = await solveValidated(next);
+        setResults(valid);
+        setTopWords(valid.slice(0, DISPLAY_LIMIT));
+        if (valid[0]) void autoTrace(valid[0], "manual");
+      }
       setScanDebug(rows);
       setLastSyncAt(Date.now());
-      setActive("scanned");
     } catch (err: any) {
       console.error("[live] scan failed:", err);
       setLiveError(err?.message ?? "Live scan failed");
@@ -292,13 +342,14 @@ function WordAssistant() {
 
   const grouped = useMemo(() => {
     const g = new Map<number, Path[]>();
-    for (const p of results) {
+    const visible = (topWords ?? results).slice(0, DISPLAY_LIMIT);
+    for (const p of visible) {
       const arr = g.get(p.word.length) ?? [];
       arr.push(p);
       g.set(p.word.length, arr);
     }
     return Array.from(g.entries()).sort((a, b) => b[0] - a[0]);
-  }, [results]);
+  }, [results, topWords]);
 
   const showHover = (id: GridId) => (id === active ? hovered : null);
 
@@ -311,11 +362,10 @@ function WordAssistant() {
     const copy = scanned.map((c) => (c || "").toUpperCase());
     setManual(copy);
     setActive("manual");
-    const trie = await loadTrie();
-    const lower = copy.map((c) => c.toLowerCase());
-    const all = solve(lower, trie);
+    const all = await solveValidated(copy);
     setResults(all);
-    setTopWords(all.slice(0, 10));
+    setTopWords(all.slice(0, DISPLAY_LIMIT));
+    if (all[0]) void autoTrace(all[0], "manual");
   }
 
   function GridBoard({
@@ -331,6 +381,11 @@ function WordAssistant() {
   }) {
     const isActive = active === id;
     const h = showHover(id);
+    const traceForBoard = trace?.gridId === id ? trace : null;
+    const traceCells = traceForBoard ? traceForBoard.path.cells.slice(0, traceForBoard.step) : [];
+    const tracePoints = traceCells
+      .map((idx) => `${(idx % 4) * 25 + 12.5},${Math.floor(idx / 4) * 25 + 12.5}`)
+      .join(" ");
     return (
       <div
         onClick={() => setActive(id)}
@@ -349,14 +404,29 @@ function WordAssistant() {
             </span>
           )}
         </div>
-        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <div className="relative grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+          {tracePoints && (
+            <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <polyline
+                points={tracePoints}
+                fill="none"
+                stroke={traceForBoard?.locked ? "#FBBF24" : "#FF69B4"}
+                strokeWidth="3.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
           {letters.map((c, i) => {
-            const highlighted = h?.cells.includes(i);
-            const order = h ? h.cells.indexOf(i) : -1;
+            const traced = traceCells.includes(i);
+            const highlighted = traced || h?.cells.includes(i);
+            const order = traced ? traceCells.indexOf(i) : h ? h.cells.indexOf(i) : -1;
             const base =
-              "h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
+              "relative z-10 h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
             const tileColor = highlighted
-              ? "bg-white text-pink-600 shadow-lg scale-105"
+              ? traceForBoard?.locked
+                ? "bg-amber-300 text-black shadow-lg shadow-amber-300/40 scale-105"
+                : "bg-white text-pink-600 shadow-lg scale-105"
               : "bg-[#FF69B4] text-white hover:bg-[#ff4fa8] active:scale-95 shadow-md shadow-pink-500/30";
             return (
               <div key={i} className="relative">
@@ -459,6 +529,8 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
+                setTopWords(null);
+                setTrace(null);
                 setManual(randomGrid());
                 setActive("manual");
               }}
@@ -471,6 +543,7 @@ function WordAssistant() {
                 setManual(EMPTY_GRID);
                 setActive("manual");
                 setTopWords(null);
+                setTrace(null);
               }}
               className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -479,7 +552,9 @@ function WordAssistant() {
             <button
               onClick={() => {
                 setScanned(EMPTY_GRID);
+                scannedRef.current = EMPTY_GRID;
                 setScanDebug(null);
+                setTrace(null);
               }}
               className="rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -540,7 +615,7 @@ function WordAssistant() {
         <section className="min-w-0">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white/70">
-              {topWords ? "Top 10 words (Generate)" : `Found words in ${active === "manual" ? "Manual" : "Scanned"} grid`}{" "}
+              {topWords ? `Top ${topWords.length} words (Generate)` : `Found words in ${active === "manual" ? "Manual" : "Scanned"} grid`}{" "}
               {solving && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
             </h2>
           </div>
@@ -557,6 +632,7 @@ function WordAssistant() {
                     key={p.word}
                     onMouseEnter={() => setHovered(p)}
                     onMouseLeave={() => setHovered(null)}
+                    onClick={() => void autoTrace(p, "manual")}
                     className="rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-sm font-medium capitalize text-emerald-100"
                   >
                     {p.word}
@@ -583,6 +659,7 @@ function WordAssistant() {
                       onMouseLeave={() => setHovered(null)}
                       onFocus={() => setHovered(p)}
                       onBlur={() => setHovered(null)}
+                      onClick={() => void autoTrace(p, active)}
                       className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-sm font-medium capitalize text-white transition-colors hover:border-pink-400 hover:bg-pink-400/10"
                     >
                       {p.word}
