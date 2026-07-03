@@ -343,13 +343,14 @@ function WordAssistant() {
 
   const grouped = useMemo(() => {
     const g = new Map<number, Path[]>();
-    for (const p of results) {
+    const visible = (topWords ?? results).slice(0, DISPLAY_LIMIT);
+    for (const p of visible) {
       const arr = g.get(p.word.length) ?? [];
       arr.push(p);
       g.set(p.word.length, arr);
     }
     return Array.from(g.entries()).sort((a, b) => b[0] - a[0]);
-  }, [results]);
+  }, [results, topWords]);
 
   const showHover = (id: GridId) => (id === active ? hovered : null);
 
@@ -362,11 +363,10 @@ function WordAssistant() {
     const copy = scanned.map((c) => (c || "").toUpperCase());
     setManual(copy);
     setActive("manual");
-    const trie = await loadTrie();
-    const lower = copy.map((c) => c.toLowerCase());
-    const all = solve(lower, trie);
+    const all = await solveValidated(copy);
     setResults(all);
-    setTopWords(all.slice(0, 10));
+    setTopWords(all.slice(0, DISPLAY_LIMIT));
+    if (all[0]) void autoTrace(all[0], "manual");
   }
 
   function GridBoard({
