@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractGrid } from "@/lib/grid-ocr.functions";
 import { filterValidPaths, loadTrie, solve, type DictionaryTrie, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle, RefreshCw } from "lucide-react";
+import onlineNowAsset from "@/assets/online-now.gif.asset.json";
+import skullsBgAsset from "@/assets/skulls-bg.jpg.asset.json";
 
 export const Route = createFileRoute("/")({
   component: WordAssistant,
@@ -27,6 +29,9 @@ export const Route = createFileRoute("/")({
 const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
 const EMPTY_GRID = Array(16).fill("");
 const DISPLAY_LIMIT = 50;
+const TRACE_DELAY_MS = 3500;
+
+const APP_BADGE_NAME = "Grid Word Assistant";
 
 function randomGrid(): string[] {
   const dice = "AAAAAABBCCDDEEEEEEFFGGHHIIIIJKLLMMNNNNOOOOPPQRRRSSSSTTTTUUVVWWXYYZ";
@@ -36,7 +41,6 @@ function randomGrid(): string[] {
 type GridId = "manual" | "scanned";
 type TraceState = { gridId: GridId; path: Path; step: number; locked: boolean };
 
-// Robust image → JPEG data URL. Handles HEIC/HEIC-ish by falling back to <img> decode.
 async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
   if (!file) throw new Error("No file selected");
   if (file.size === 0) throw new Error("File is empty (0 bytes) — the camera capture failed. Try again.");
@@ -61,7 +65,6 @@ async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
     return url;
   }
 
-  // Path 1: createImageBitmap (fast; supports JPEG/PNG/WebP; Safari 17+ supports HEIC).
   try {
     const bmp = await createImageBitmap(file);
     const url = await drawToJpeg(bmp, bmp.width, bmp.height);
@@ -71,7 +74,6 @@ async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
     console.warn("[decode] createImageBitmap failed, falling back to <img>:", err);
   }
 
-  // Path 2: HTMLImageElement via object URL (works for anything the browser can render).
   const objectUrl = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -112,9 +114,9 @@ function WordAssistant() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const trieRef = useRef<DictionaryTrie | null>(null);
   const traceRunRef = useRef(0);
+  const pendingTraceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extract = useServerFn(extractGrid);
 
-  // ----- Live Sync state -----
   const [liveOn, setLiveOn] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<"idle" | "starting" | "watching" | "scanning">("idle");
@@ -126,6 +128,7 @@ function WordAssistant() {
   const liveOnRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scannedRef = useRef<string[]>(scanned);
+  const manualRef = useRef<string[]>(manual);
 
   useEffect(() => {
     loadTrie().then((trie) => {
@@ -134,9 +137,8 @@ function WordAssistant() {
     });
   }, []);
 
-  useEffect(() => {
-    scannedRef.current = scanned;
-  }, [scanned]);
+  useEffect(() => { scannedRef.current = scanned; }, [scanned]);
+  useEffect(() => { manualRef.current = manual; }, [manual]);
 
   useEffect(() => {
     if (!liveOn) return;
@@ -145,10 +147,7 @@ function WordAssistant() {
   }, [liveOn]);
 
   const activeLetters = active === "manual" ? manual : scanned;
-  const grid = useMemo(
-    () => activeLetters.map((c) => (c || " ").toLowerCase()),
-    [activeLetters],
-  );
+  const grid = useMemo(() => activeLetters.map((c) => (c || " ").toLowerCase()), [activeLetters]);
 
   useEffect(() => {
     if (!ready) return;
@@ -218,7 +217,24 @@ function WordAssistant() {
     }
     if (run === traceRunRef.current) {
       setTrace({ gridId, path, step: path.cells.length, locked: true });
+      // #7 — after locking a word on Manual, auto-reset selection so it's ready for the next word.
+      if (gridId === "manual") {
+        setTimeout(() => {
+          if (run === traceRunRef.current) {
+            setTrace(null);
+            setHovered(null);
+          }
+        }, 1500);
+      }
     }
+  }
+
+  function scheduleTrace(path: Path, gridId: GridId, delayMs: number) {
+    if (pendingTraceRef.current) clearTimeout(pendingTraceRef.current);
+    pendingTraceRef.current = setTimeout(() => {
+      pendingTraceRef.current = null;
+      void autoTrace(path, gridId);
+    }, delayMs);
   }
 
   async function processFile(file: File) {
@@ -227,7 +243,6 @@ function WordAssistant() {
     setUploadMs(null);
     const t0 = performance.now();
     try {
-      console.log("[upload] file:", { name: file.name, type: file.type, size: file.size });
       const dataUrl = await fileToJpegDataUrl(file, 512);
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       setScanned(got);
@@ -236,12 +251,8 @@ function WordAssistant() {
       setActive("scanned");
       setTopWords(null);
       setTrace(null);
-      console.log("[OCR] Row/col mapping:");
-      rows.forEach((r, i) => console.log(`  row ${i}:`, r.join(" ")));
     } catch (err: any) {
-      const msg = err?.message ?? String(err) ?? "Failed to read grid";
-      console.error("[upload] failed:", err);
-      setError(msg);
+      setError(err?.message ?? String(err) ?? "Failed to read grid");
     } finally {
       setUploadMs(Math.round(performance.now() - t0));
       setUploading(false);
@@ -269,8 +280,8 @@ function WordAssistant() {
     return canvas.toDataURL("image/jpeg", 0.8);
   }
 
-  async function liveTick() {
-    if (!liveOnRef.current || scanningRef.current) return;
+  async function runScanCycle(reason: "live" | "rescan") {
+    if (scanningRef.current) return;
     scanningRef.current = true;
     setLiveStatus("scanning");
     try {
@@ -278,8 +289,7 @@ function WordAssistant() {
       if (!dataUrl) return;
       const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
       const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
-      console.log("[live] diff — changed", changed, "tiles");
-      if (changed > 0) {
+      if (changed > 0 || reason === "rescan") {
         scannedRef.current = next;
         setScanned(next);
         setManual(next);
@@ -287,16 +297,17 @@ function WordAssistant() {
         const valid = await solveValidated(next);
         setResults(valid);
         setTopWords(valid.slice(0, DISPLAY_LIMIT));
-        if (valid[0]) void autoTrace(valid[0], "manual");
+        // #5 — delay trace 3-4s after grid update
+        if (valid[0]) scheduleTrace(valid[0], "manual", TRACE_DELAY_MS);
       }
       setScanDebug(rows);
       setLastSyncAt(Date.now());
     } catch (err: any) {
-      console.error("[live] scan failed:", err);
       setLiveError(err?.message ?? "Live scan failed");
     } finally {
       scanningRef.current = false;
       if (liveOnRef.current) setLiveStatus("watching");
+      else setLiveStatus("idle");
     }
   }
 
@@ -309,7 +320,6 @@ function WordAssistant() {
         audio: false,
       });
       streamRef.current = stream;
-      // Attach to a video element (created via ref in JSX below).
       const video = videoRef.current!;
       video.srcObject = stream;
       video.setAttribute("playsinline", "true");
@@ -317,11 +327,9 @@ function WordAssistant() {
       liveOnRef.current = true;
       setLiveOn(true);
       setLiveStatus("watching");
-      // Fire first scan immediately, then every 2.5s.
-      liveTick();
-      intervalRef.current = setInterval(liveTick, 2500);
+      runScanCycle("live");
+      intervalRef.current = setInterval(() => runScanCycle("live"), 2500);
     } catch (err: any) {
-      console.error("[live] start failed:", err);
       setLiveError(err?.message ?? "Could not start camera");
       setLiveStatus("idle");
       stopLiveSync();
@@ -336,6 +344,19 @@ function WordAssistant() {
     const s = streamRef.current;
     if (s) { s.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
     if (videoRef.current) videoRef.current.srcObject = null;
+  }
+
+  async function rescanNow() {
+    if (!liveOn) {
+      setLiveError("Start Live Sync first to enable Rescan.");
+      return;
+    }
+    // Force a scan even if the previous one is still running: wait briefly, then run.
+    const started = performance.now();
+    while (scanningRef.current && performance.now() - started < 2000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await runScanCycle("rescan");
   }
 
   useEffect(() => () => stopLiveSync(), []);
@@ -353,6 +374,18 @@ function WordAssistant() {
 
   const showHover = (id: GridId) => (id === active ? hovered : null);
 
+  // #8 — Grid match indicator
+  const gridMatch = useMemo(() => {
+    const diffs: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (manual[i] || "").toUpperCase();
+      const b = (scanned[i] || "").toUpperCase();
+      if (a !== b) diffs.push(i);
+    }
+    const scannedEmpty = scanned.every((c) => !c);
+    return { match: diffs.length === 0 && !scannedEmpty, diffs, scannedEmpty };
+  }, [manual, scanned]);
+
   async function generateFromScanned() {
     setError(null);
     if (scanned.some((c) => !/[A-Za-z]/.test(c))) {
@@ -369,15 +402,9 @@ function WordAssistant() {
   }
 
   function GridBoard({
-    id,
-    letters,
-    editable,
-    label,
+    id, letters, editable, label, mismatchCells,
   }: {
-    id: GridId;
-    letters: string[];
-    editable: boolean;
-    label: string;
+    id: GridId; letters: string[]; editable: boolean; label: string; mismatchCells?: number[];
   }) {
     const isActive = active === id;
     const h = showHover(id);
@@ -390,18 +417,14 @@ function WordAssistant() {
       <div
         onClick={() => setActive(id)}
         className={[
-          "flex flex-col items-center gap-3 rounded-2xl p-4 transition-all cursor-pointer",
-          isActive ? "bg-white/5 ring-2 ring-pink-400" : "bg-white/[0.02] ring-1 ring-white/10",
+          "flex flex-col items-center gap-3 rounded-2xl p-4 transition-all cursor-pointer backdrop-blur-sm",
+          isActive ? "bg-black/60 ring-2 ring-pink-400" : "bg-black/50 ring-1 ring-white/10",
         ].join(" ")}
       >
         <div className="flex w-full items-center justify-between">
-          <span className="text-sm font-semibold uppercase tracking-wider text-pink-300">
-            {label}
-          </span>
+          <span className="text-sm font-semibold uppercase tracking-wider text-pink-300">{label}</span>
           {isActive && (
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-400">
-              Active
-            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-400">Active</span>
           )}
         </div>
         <div className="relative grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
@@ -421,13 +444,15 @@ function WordAssistant() {
             const traced = traceCells.includes(i);
             const highlighted = traced || h?.cells.includes(i);
             const order = traced ? traceCells.indexOf(i) : h ? h.cells.indexOf(i) : -1;
+            const mismatched = mismatchCells?.includes(i);
             const base =
-              "relative z-10 h-14 w-14 rounded-lg text-center text-2xl font-bold uppercase transition-all sm:h-16 sm:w-16 sm:text-3xl focus:outline-none focus:ring-2 focus:ring-white/70";
+              "relative z-10 h-12 w-12 rounded-lg text-center text-xl font-bold uppercase transition-all sm:h-14 sm:w-14 sm:text-2xl focus:outline-none focus:ring-2 focus:ring-white/70";
             const tileColor = highlighted
               ? traceForBoard?.locked
                 ? "bg-amber-300 text-black shadow-lg shadow-amber-300/40 scale-105"
                 : "bg-white text-pink-600 shadow-lg scale-105"
               : "bg-[#FF69B4] text-white hover:bg-[#ff4fa8] active:scale-95 shadow-md shadow-pink-500/30";
+            const mismatchRing = mismatched ? "ring-2 ring-red-500 ring-offset-1 ring-offset-black" : "";
             return (
               <div key={i} className="relative">
                 {editable ? (
@@ -436,18 +461,11 @@ function WordAssistant() {
                     value={c}
                     maxLength={1}
                     onChange={(e) => setManualCell(i, e.target.value)}
-                    onFocus={(e) => {
-                      setActive("manual");
-                      e.target.select();
-                    }}
-                    className={`${base} ${tileColor}`}
+                    onFocus={(e) => { setActive("manual"); e.target.select(); }}
+                    className={`${base} ${tileColor} ${mismatchRing}`}
                   />
                 ) : (
-                  <div
-                    className={`${base} grid place-items-center ${
-                      c ? tileColor : "bg-white/10 text-white/40"
-                    }`}
-                  >
+                  <div className={`${base} grid place-items-center ${c ? tileColor : "bg-white/10 text-white/40"} ${mismatchRing}`}>
                     {c || ""}
                   </div>
                 )}
@@ -465,14 +483,32 @@ function WordAssistant() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <header className="border-b border-white/10">
+    <div
+      className="min-h-screen text-white"
+      style={{
+        backgroundColor: "#000",
+        backgroundImage: `linear-gradient(rgba(0,0,0,0.72), rgba(0,0,0,0.82)), url(${skullsBgAsset.url})`,
+        backgroundRepeat: "repeat",
+        backgroundSize: "auto",
+      }}
+    >
+      <header className="border-b border-white/10 bg-black/60 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5">
-          <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-md bg-[#FF69B4] text-white">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-md bg-[#FF69B4] text-white">
               <Sparkles className="h-4 w-4" />
             </div>
-            <h1 className="text-lg font-semibold tracking-tight">Grid Word Assistant</h1>
+            <h1
+              className="leading-none"
+              style={{
+                fontFamily: '"Great Vibes", "Alex Brush", cursive',
+                color: "#ff007f",
+                fontSize: "clamp(2.25rem, 6vw, 3.75rem)",
+                textShadow: "0 0 12px rgba(255,0,127,0.55), 0 0 24px rgba(255,0,127,0.35)",
+              }}
+            >
+              Grid Word Assistant
+            </h1>
           </div>
           <div className="text-xs text-white/60">
             {ready ? `${results.length.toLocaleString()} words` : "Loading dictionary…"}
@@ -480,30 +516,100 @@ function WordAssistant() {
         </div>
       </header>
 
+      {/* #4 — Online now badge */}
+      <div className="mx-auto flex max-w-6xl justify-center px-4 pt-6">
+        <div
+          className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]"
+        >
+          <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
+          <span
+            style={{
+              fontFamily: '"Press Start 2P", monospace',
+              color: "#ff007f",
+              fontSize: "0.72rem",
+              lineHeight: 1.2,
+              textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.7), 0 0 2px #fff",
+            }}
+          >
+            {APP_BADGE_NAME} is online now
+          </span>
+        </div>
+      </div>
+
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
         <section className="flex flex-col items-center gap-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <GridBoard id="manual" letters={manual} editable label="Manual Grid" />
-            <GridBoard id="scanned" letters={scanned} editable={false} label="Scanned Grid" />
+          {/* #1 — three-column layout: Manual | Live Camera | Scanned */}
+          <div className="grid gap-4 md:grid-cols-3 items-start">
+            <GridBoard id="manual" letters={manual} editable label="Manual Grid" mismatchCells={gridMatch.diffs} />
+
+            <div className="flex flex-col items-center gap-3 rounded-2xl p-4 bg-black/50 ring-1 ring-white/10 backdrop-blur-sm">
+              <span className="text-sm font-semibold uppercase tracking-wider text-pink-300">Live Camera</span>
+              <div className={liveOn ? "relative w-full max-w-[220px] overflow-hidden rounded-lg border-2 border-red-500 bg-black" : "hidden"}>
+                <video ref={videoRef} className="w-full" muted playsInline />
+                <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-400">
+                  <span className={`h-2 w-2 rounded-full bg-red-500 ${liveStatus === "scanning" ? "animate-pulse" : ""}`} />
+                  {liveStatus === "scanning" ? "Scanning…" : "Live"}
+                </div>
+              </div>
+              {!liveOn && (
+                <div className="grid h-[160px] w-full max-w-[220px] place-items-center rounded-lg border-2 border-dashed border-white/20 bg-black/40 text-xs text-white/50">
+                  Camera off
+                </div>
+              )}
+              <div className="flex flex-wrap justify-center gap-2">
+                {!liveOn ? (
+                  <button
+                    onClick={startLiveSync}
+                    disabled={uploading}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-red-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-red-400 active:scale-95 disabled:opacity-50"
+                  >
+                    <Radio className="h-3.5 w-3.5" /> Start
+                  </button>
+                ) : (
+                  <button
+                    onClick={stopLiveSync}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-white text-black px-2.5 py-1.5 text-xs font-semibold hover:bg-white/90 active:scale-95"
+                  >
+                    <StopCircle className="h-3.5 w-3.5" /> Stop
+                  </button>
+                )}
+                {/* #6 — Rescan */}
+                <button
+                  onClick={rescanNow}
+                  disabled={!liveOn}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-pink-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-pink-400 active:scale-95 disabled:opacity-40"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${liveStatus === "scanning" ? "animate-spin" : ""}`} /> Rescan
+                </button>
+              </div>
+              {/* #8 — Grid match indicator */}
+              <div
+                className={[
+                  "w-full rounded-md px-2 py-1.5 text-center text-xs font-semibold",
+                  gridMatch.scannedEmpty
+                    ? "bg-white/5 text-white/50"
+                    : gridMatch.match
+                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/60"
+                      : "bg-red-500/20 text-red-300 ring-1 ring-red-400/60",
+                ].join(" ")}
+              >
+                {gridMatch.scannedEmpty
+                  ? "No scanned grid yet"
+                  : gridMatch.match
+                    ? "✓ Grids Match"
+                    : `⚠ Grid Mismatch (${gridMatch.diffs.length} tile${gridMatch.diffs.length === 1 ? "" : "s"})`}
+              </div>
+              {lastSyncAt && (
+                <p className="text-[10px] text-white/60">
+                  Synced {Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago
+                </p>
+              )}
+            </div>
+
+            <GridBoard id="scanned" letters={scanned} editable={false} label="Scanned Grid" mismatchCells={gridMatch.diffs} />
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
-            {!liveOn ? (
-              <button
-                onClick={startLiveSync}
-                disabled={uploading}
-                className="inline-flex items-center gap-2 rounded-md bg-red-500 px-3 py-2 text-sm font-semibold text-white hover:bg-red-400 active:scale-95 disabled:opacity-50"
-              >
-                <Radio className="h-4 w-4" /> Start Live Sync
-              </button>
-            ) : (
-              <button
-                onClick={stopLiveSync}
-                className="inline-flex items-center gap-2 rounded-md bg-white text-black px-3 py-2 text-sm font-semibold hover:bg-white/90 active:scale-95"
-              >
-                <StopCircle className="h-4 w-4" /> Stop Live Sync
-              </button>
-            )}
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
@@ -517,8 +623,7 @@ function WordAssistant() {
               disabled={uploading}
               className="inline-flex items-center gap-2 rounded-md bg-[#FF69B4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff4fa8] active:scale-95 disabled:opacity-50"
             >
-              <Camera className="h-4 w-4" />
-              Upload new grid
+              <Camera className="h-4 w-4" /> Upload new grid
             </button>
             <button
               onClick={generateFromScanned}
@@ -529,10 +634,8 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
-                setTopWords(null);
-                setTrace(null);
-                setManual(randomGrid());
-                setActive("manual");
+                setTopWords(null); setTrace(null);
+                setManual(randomGrid()); setActive("manual");
               }}
               className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -540,10 +643,7 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
-                setManual(EMPTY_GRID);
-                setActive("manual");
-                setTopWords(null);
-                setTrace(null);
+                setManual(EMPTY_GRID); setActive("manual"); setTopWords(null); setTrace(null);
               }}
               className="inline-flex items-center gap-2 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
@@ -551,48 +651,18 @@ function WordAssistant() {
             </button>
             <button
               onClick={() => {
-                setScanned(EMPTY_GRID);
-                scannedRef.current = EMPTY_GRID;
-                setScanDebug(null);
-                setTrace(null);
+                setScanned(EMPTY_GRID); scannedRef.current = EMPTY_GRID; setScanDebug(null); setTrace(null);
               }}
               className="rounded-md border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
             >
               Clear scanned
             </button>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
-            <input
-              ref={cameraRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={onFile}
-            />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
           </div>
 
-          {/* Video element always mounted so ref stays stable; hidden when not live */}
-          <div className={liveOn ? "flex flex-col items-center gap-2" : "hidden"}>
-            <div className="relative w-full max-w-xs overflow-hidden rounded-lg border-2 border-red-500 bg-black">
-              <video ref={videoRef} className="w-full" muted playsInline />
-              <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-400">
-                <span className={`h-2 w-2 rounded-full bg-red-500 ${liveStatus === "scanning" ? "animate-pulse" : ""}`} />
-                {liveStatus === "scanning" ? "Scanning…" : "Live"}
-              </div>
-            </div>
-            <p className="text-xs text-white/70">
-              {lastSyncAt
-                ? `Synced ${Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago`
-                : "Waiting for first scan…"}
-            </p>
-          </div>
-
-          {liveError && (
-            <p className="max-w-md text-center text-sm text-red-400">{liveError}</p>
-          )}
-          {error && (
-            <p className="max-w-md text-center text-sm text-red-400 whitespace-pre-wrap">{error}</p>
-          )}
+          {liveError && <p className="max-w-md text-center text-sm text-red-400">{liveError}</p>}
+          {error && <p className="max-w-md text-center text-sm text-red-400 whitespace-pre-wrap">{error}</p>}
           {uploadMs !== null && !uploading && !error && (
             <p className={`text-xs ${uploadMs < 2000 ? "text-green-400" : "text-yellow-400"}`}>
               Scan completed in {uploadMs} ms {uploadMs < 2000 ? "✓ under 2s target" : "(over 2s target)"}
@@ -600,15 +670,13 @@ function WordAssistant() {
           )}
           {scanDebug && (
             <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
-              <div className="mb-1 text-pink-300">Row/col mapping (verify against image):</div>
-              {scanDebug.map((r, i) => (
-                <div key={i}>row {i}: {r.join(" · ")}</div>
-              ))}
+              <div className="mb-1 text-pink-300">Row/col mapping:</div>
+              {scanDebug.map((r, i) => (<div key={i}>row {i}: {r.join(" · ")}</div>))}
             </div>
           )}
           <p className="max-w-md text-center text-xs text-white/50">
-            Click a grid to make it active. Letters connect in all 8 directions; each tile is used
-            once per word. All words are validated against a local English dictionary.
+            Click a grid to make it active. Letters connect in all 8 directions; each tile is used once per word.
+            All words are validated against a local English dictionary.
           </p>
         </section>
 
@@ -642,9 +710,7 @@ function WordAssistant() {
             </div>
           )}
 
-          {ready && results.length === 0 && (
-            <p className="text-sm text-white/50">Fill every cell to see valid words.</p>
-          )}
+          {ready && results.length === 0 && (<p className="text-sm text-white/50">Fill every cell to see valid words.</p>)}
           <div className="space-y-4">
             {grouped.map(([len, words]) => (
               <div key={len}>
@@ -671,6 +737,21 @@ function WordAssistant() {
           </div>
         </section>
       </main>
+
+      {/* #3 — footer */}
+      <footer className="border-t border-white/10 bg-black/70 py-8 text-center">
+        <p
+          style={{
+            fontFamily: '"Great Vibes", "Alex Brush", cursive',
+            fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+            color: "#ffd6ec",
+            textShadow:
+              "0 0 6px #fff, 0 0 12px #ff69b4, 0 0 22px #ff007f, 0 0 36px rgba(255,0,127,0.6)",
+          }}
+        >
+          Vibe Coded by Jazzy Raielle, xoxo
+        </p>
+      </footer>
     </div>
   );
 }
