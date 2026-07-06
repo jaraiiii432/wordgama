@@ -26,8 +26,9 @@ function validateWordListPlugin() {
       for (const w of MUST_BE_INVALID) if (words.has(w)) failures.push(`"${w}" MUST be invalid but is present in words.txt`);
       for (const w of MUST_BE_VALID) if (!words.has(w)) failures.push(`"${w}" MUST be valid but is missing from words.txt`);
       if (failures.length) {
-        this.error(`Word list validation failed:\n  - ${failures.join("\n  - ")}`);
+        throw new Error(`Word list validation failed:\n  - ${failures.join("\n  - ")}`);
       }
+
       // eslint-disable-next-line no-console
       console.log(`[validate-word-list] OK — ${MUST_BE_INVALID.length + MUST_BE_VALID.length} assertions passed (${words.size} words loaded)`);
     },
