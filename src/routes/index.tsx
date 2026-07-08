@@ -98,6 +98,92 @@ async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
   }
 }
 
+/**
+ * Split a source image/video into 16 preprocessed tiles.
+ * Preprocessing: grayscale + auto-invert (so text is always dark-on-white) +
+ * contrast stretch + Otsu-ish binary threshold. Returns base64 PNGs.
+ */
+async function splitAndPreprocessTiles(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  opts?: { inset?: number; tilePx?: number },
+): Promise<string[]> {
+  const inset = opts?.inset ?? 0.03;
+  const tilePx = opts?.tilePx ?? 96;
+  const usableW = srcW * (1 - inset * 2);
+  const usableH = srcH * (1 - inset * 2);
+  const offX = srcW * inset;
+  const offY = srcH * inset;
+  const cellW = usableW / 4;
+  const cellH = usableH / 4;
+  const tiles: string[] = [];
+  const canvas = document.createElement("canvas");
+  canvas.width = tilePx;
+  canvas.height = tilePx;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas 2D unavailable");
+
+  const pad = 0.12; // shrink each tile slightly to drop borders
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      const sx = offX + c * cellW + cellW * pad;
+      const sy = offY + r * cellH + cellH * pad;
+      const sw = cellW * (1 - pad * 2);
+      const sh = cellH * (1 - pad * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, tilePx, tilePx);
+      ctx.drawImage(source, sx, sy, sw, sh, 0, 0, tilePx, tilePx);
+
+      const img = ctx.getImageData(0, 0, tilePx, tilePx);
+      const d = img.data;
+      // grayscale + mean
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i] = d[i + 1] = d[i + 2] = g;
+        sum += g;
+      }
+      const mean = sum / (d.length / 4);
+      // If background is darker than text, invert so text becomes dark on light.
+      const invert = mean < 128;
+      // Threshold at (mean +/- delta) with mild contrast stretch.
+      const thr = invert ? 255 - mean * 0.9 : mean * 1.05;
+      for (let i = 0; i < d.length; i += 4) {
+        let g = d[i];
+        if (invert) g = 255 - g;
+        const bin = g > thr ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = bin;
+      }
+      ctx.putImageData(img, 0, 0);
+      tiles.push(canvas.toDataURL("image/png"));
+    }
+  }
+  return tiles;
+}
+
+async function fileToTiles(file: File): Promise<string[]> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const tiles = await splitAndPreprocessTiles(bmp, bmp.width, bmp.height);
+    bmp.close?.();
+    return tiles;
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((res, rej) => {
+        const el = new Image();
+        el.onload = () => res(el);
+        el.onerror = () => rej(new Error("Could not decode image"));
+        el.src = url;
+      });
+      return await splitAndPreprocessTiles(img, img.naturalWidth, img.naturalHeight);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
 function WordAssistant() {
   const [manual, setManual] = useState<string[]>(DEFAULT_GRID);
   const [scanned, setScanned] = useState<string[]>(EMPTY_GRID);
