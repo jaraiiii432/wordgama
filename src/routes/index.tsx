@@ -881,6 +881,9 @@ function WordAssistant() {
         >
           Vibe Coded by Jazzy Raielle, xoxo
         </p>
+        <p className="mt-3 text-xs text-white/50">
+          © {new Date().getFullYear()} Jazzy Raielle. All rights reserved.
+        </p>
       </footer>
     </div>
   );
