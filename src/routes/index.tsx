@@ -516,11 +516,9 @@ function WordAssistant() {
         </div>
       </header>
 
-      {/* #4 — Online now badge */}
+      {/* Online now badge */}
       <div className="mx-auto flex max-w-6xl justify-center px-4 pt-6">
-        <div
-          className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]"
-        >
+        <div className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]">
           <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
           <span
             style={{
@@ -531,7 +529,7 @@ function WordAssistant() {
               textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.7), 0 0 2px #fff",
             }}
           >
-            {APP_BADGE_NAME} is online now
+            ¡¡!!$$$ is ONLINE NOW!!¡¡$$
           </span>
         </div>
       </div>
