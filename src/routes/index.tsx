@@ -760,9 +760,48 @@ function WordAssistant() {
             </p>
           )}
           {scanDebug && (
-            <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
+            <div className="w-full max-w-md rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
               <div className="mb-1 text-pink-300">Row/col mapping:</div>
               {scanDebug.map((r, i) => (<div key={i}>row {i}: {r.join(" · ")}</div>))}
+              {tileResults && (
+                <div className="mt-2 border-t border-white/10 pt-2">
+                  <div className="mb-1 text-pink-300">Per-tile OCR results:</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {tileResults.map((t) => (
+                      <div
+                        key={t.index}
+                        className={[
+                          "rounded px-1 py-1 text-center",
+                          t.letter
+                            ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
+                            : "bg-red-500/20 text-red-300 ring-1 ring-red-400/40",
+                        ].join(" ")}
+                        title={t.error || t.rawText || ""}
+                      >
+                        <div className="text-sm font-bold">{t.letter || "∅"}</div>
+                        <div className="text-[9px] opacity-70">
+                          {t.confidence != null ? `${Math.round(t.confidence * 100)}%` : t.error ? "err" : "—"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {rawOcrJson && (
+                <div className="mt-2 border-t border-white/10 pt-2">
+                  <button
+                    onClick={() => setShowRaw((s) => !s)}
+                    className="text-pink-300 underline hover:text-pink-200"
+                  >
+                    {showRaw ? "Hide" : "Show"} raw OCR response
+                  </button>
+                  {showRaw && (
+                    <pre className="mt-1 max-h-64 overflow-auto rounded bg-black/60 p-2 text-[10px] leading-tight text-white/70">
+                      {JSON.stringify(rawOcrJson, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <p className="max-w-md text-center text-xs text-white/50">
