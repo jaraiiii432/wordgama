@@ -334,11 +334,15 @@ function WordAssistant() {
     setUploadMs(null);
     const t0 = performance.now();
     try {
-      const dataUrl = await fileToJpegDataUrl(file, 512);
-      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      const tiles = await fileToTiles(file);
+      console.log("[OCR] sending", tiles.length, "tiles, first tile ~", Math.round(tiles[0].length * 0.75 / 1024), "KB");
+      const resp: any = await extract({ data: { tiles } });
+      const { rows, letters: got, tiles: tRes } = resp;
       setScanned(got);
       scannedRef.current = got;
       setScanDebug(rows);
+      setTileResults(tRes ?? null);
+      setRawOcrJson(resp);
       setActive("scanned");
       setTopWords(null);
       setTrace(null);
@@ -356,19 +360,10 @@ function WordAssistant() {
     if (file) await processFile(file);
   }
 
-  async function captureFrameJpeg(maxDim = 512): Promise<string | null> {
+  async function captureFrameTiles(): Promise<string[] | null> {
     const video = videoRef.current;
     if (!video || !video.videoWidth || !video.videoHeight) return null;
-    const w = video.videoWidth, h = video.videoHeight;
-    const scale = Math.min(1, maxDim / Math.max(w, h));
-    const dw = Math.max(1, Math.round(w * scale));
-    const dh = Math.max(1, Math.round(h * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = dw; canvas.height = dh;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, dw, dh);
-    return canvas.toDataURL("image/jpeg", 0.8);
+    return await splitAndPreprocessTiles(video, video.videoWidth, video.videoHeight);
   }
 
   async function runScanCycle(reason: "live" | "rescan") {
@@ -376,9 +371,10 @@ function WordAssistant() {
     scanningRef.current = true;
     setLiveStatus("scanning");
     try {
-      const dataUrl = await captureFrameJpeg(512);
-      if (!dataUrl) return;
-      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      const tiles = await captureFrameTiles();
+      if (!tiles) return;
+      const resp: any = await extract({ data: { tiles } });
+      const { rows, letters: got, tiles: tRes } = resp;
       const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
       if (changed > 0 || reason === "rescan") {
         scannedRef.current = next;
@@ -388,10 +384,11 @@ function WordAssistant() {
         const valid = await solveValidated(next);
         setResults(valid);
         setTopWords(valid.slice(0, DISPLAY_LIMIT));
-        // #5 — delay trace 3-4s after grid update
         if (valid[0]) scheduleTrace(valid[0], "manual", TRACE_DELAY_MS);
       }
       setScanDebug(rows);
+      setTileResults(tRes ?? null);
+      setRawOcrJson(resp);
       setLastSyncAt(Date.now());
     } catch (err: any) {
       setLiveError(err?.message ?? "Live scan failed");
@@ -401,6 +398,7 @@ function WordAssistant() {
       else setLiveStatus("idle");
     }
   }
+
 
   async function startLiveSync() {
     setLiveError(null);
