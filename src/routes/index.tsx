@@ -269,7 +269,10 @@ function WordAssistant() {
   }
 
   const [uploadMs, setUploadMs] = useState<number | null>(null);
-  const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
+  const [tileResults, setTileResults] = useState<Array<{ index: number; letter: string; confidence: number | null; error?: string; rawText?: string }> | null>(null);
+  const [rawOcrJson, setRawOcrJson] = useState<any>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
 
   async function solveValidated(letters: string[]): Promise<Path[]> {
     const trie = trieRef.current ?? (await loadTrie());
