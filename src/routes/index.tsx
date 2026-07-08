@@ -516,11 +516,9 @@ function WordAssistant() {
         </div>
       </header>
 
-      {/* #4 — Online now badge */}
+      {/* Online now badge */}
       <div className="mx-auto flex max-w-6xl justify-center px-4 pt-6">
-        <div
-          className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]"
-        >
+        <div className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]">
           <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
           <span
             style={{
@@ -531,15 +529,15 @@ function WordAssistant() {
               textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.7), 0 0 2px #fff",
             }}
           >
-            {APP_BADGE_NAME} is online now
+            ¡¡!!$$$ is ONLINE NOW!!¡¡$$
           </span>
         </div>
       </div>
 
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
         <section className="flex flex-col items-center gap-4">
-          {/* #1 — three-column layout: Manual | Live Camera | Scanned */}
-          <div className="grid gap-4 md:grid-cols-3 items-start">
+          {/* Strict horizontal three-column layout: Manual | Live Camera | Scanned */}
+          <div className="grid w-full grid-cols-3 gap-4 items-start">
             <GridBoard id="manual" letters={manual} editable label="Manual Grid" mismatchCells={gridMatch.diffs} />
 
             <div className="flex flex-col items-center gap-3 rounded-2xl p-4 bg-black/50 ring-1 ring-white/10 backdrop-blur-sm">
