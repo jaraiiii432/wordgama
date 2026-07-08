@@ -98,6 +98,92 @@ async function fileToJpegDataUrl(file: File, maxDim = 512): Promise<string> {
   }
 }
 
+/**
+ * Split a source image/video into 16 preprocessed tiles.
+ * Preprocessing: grayscale + auto-invert (so text is always dark-on-white) +
+ * contrast stretch + Otsu-ish binary threshold. Returns base64 PNGs.
+ */
+async function splitAndPreprocessTiles(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  opts?: { inset?: number; tilePx?: number },
+): Promise<string[]> {
+  const inset = opts?.inset ?? 0.03;
+  const tilePx = opts?.tilePx ?? 96;
+  const usableW = srcW * (1 - inset * 2);
+  const usableH = srcH * (1 - inset * 2);
+  const offX = srcW * inset;
+  const offY = srcH * inset;
+  const cellW = usableW / 4;
+  const cellH = usableH / 4;
+  const tiles: string[] = [];
+  const canvas = document.createElement("canvas");
+  canvas.width = tilePx;
+  canvas.height = tilePx;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas 2D unavailable");
+
+  const pad = 0.12; // shrink each tile slightly to drop borders
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      const sx = offX + c * cellW + cellW * pad;
+      const sy = offY + r * cellH + cellH * pad;
+      const sw = cellW * (1 - pad * 2);
+      const sh = cellH * (1 - pad * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, tilePx, tilePx);
+      ctx.drawImage(source, sx, sy, sw, sh, 0, 0, tilePx, tilePx);
+
+      const img = ctx.getImageData(0, 0, tilePx, tilePx);
+      const d = img.data;
+      // grayscale + mean
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i] = d[i + 1] = d[i + 2] = g;
+        sum += g;
+      }
+      const mean = sum / (d.length / 4);
+      // If background is darker than text, invert so text becomes dark on light.
+      const invert = mean < 128;
+      // Threshold at (mean +/- delta) with mild contrast stretch.
+      const thr = invert ? 255 - mean * 0.9 : mean * 1.05;
+      for (let i = 0; i < d.length; i += 4) {
+        let g = d[i];
+        if (invert) g = 255 - g;
+        const bin = g > thr ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = bin;
+      }
+      ctx.putImageData(img, 0, 0);
+      tiles.push(canvas.toDataURL("image/png"));
+    }
+  }
+  return tiles;
+}
+
+async function fileToTiles(file: File): Promise<string[]> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const tiles = await splitAndPreprocessTiles(bmp, bmp.width, bmp.height);
+    bmp.close?.();
+    return tiles;
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((res, rej) => {
+        const el = new Image();
+        el.onload = () => res(el);
+        el.onerror = () => rej(new Error("Could not decode image"));
+        el.src = url;
+      });
+      return await splitAndPreprocessTiles(img, img.naturalWidth, img.naturalHeight);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
 function WordAssistant() {
   const [manual, setManual] = useState<string[]>(DEFAULT_GRID);
   const [scanned, setScanned] = useState<string[]>(EMPTY_GRID);
@@ -184,6 +270,11 @@ function WordAssistant() {
 
   const [uploadMs, setUploadMs] = useState<number | null>(null);
   const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
+  const [tileResults, setTileResults] = useState<Array<{ index: number; letter: string; confidence: number | null; error?: string; rawText?: string }> | null>(null);
+  const [rawOcrJson, setRawOcrJson] = useState<any>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
+
 
   async function solveValidated(letters: string[]): Promise<Path[]> {
     const trie = trieRef.current ?? (await loadTrie());
@@ -243,11 +334,15 @@ function WordAssistant() {
     setUploadMs(null);
     const t0 = performance.now();
     try {
-      const dataUrl = await fileToJpegDataUrl(file, 512);
-      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      const tiles = await fileToTiles(file);
+      console.log("[OCR] sending", tiles.length, "tiles, first tile ~", Math.round(tiles[0].length * 0.75 / 1024), "KB");
+      const resp: any = await extract({ data: { tiles } });
+      const { rows, letters: got, tiles: tRes } = resp;
       setScanned(got);
       scannedRef.current = got;
       setScanDebug(rows);
+      setTileResults(tRes ?? null);
+      setRawOcrJson(resp);
       setActive("scanned");
       setTopWords(null);
       setTrace(null);
@@ -265,19 +360,10 @@ function WordAssistant() {
     if (file) await processFile(file);
   }
 
-  async function captureFrameJpeg(maxDim = 512): Promise<string | null> {
+  async function captureFrameTiles(): Promise<string[] | null> {
     const video = videoRef.current;
     if (!video || !video.videoWidth || !video.videoHeight) return null;
-    const w = video.videoWidth, h = video.videoHeight;
-    const scale = Math.min(1, maxDim / Math.max(w, h));
-    const dw = Math.max(1, Math.round(w * scale));
-    const dh = Math.max(1, Math.round(h * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = dw; canvas.height = dh;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, dw, dh);
-    return canvas.toDataURL("image/jpeg", 0.8);
+    return await splitAndPreprocessTiles(video, video.videoWidth, video.videoHeight);
   }
 
   async function runScanCycle(reason: "live" | "rescan") {
@@ -285,9 +371,10 @@ function WordAssistant() {
     scanningRef.current = true;
     setLiveStatus("scanning");
     try {
-      const dataUrl = await captureFrameJpeg(512);
-      if (!dataUrl) return;
-      const { rows, letters: got } = await extract({ data: { imageDataUrl: dataUrl } });
+      const tiles = await captureFrameTiles();
+      if (!tiles) return;
+      const resp: any = await extract({ data: { tiles } });
+      const { rows, letters: got, tiles: tRes } = resp;
       const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
       if (changed > 0 || reason === "rescan") {
         scannedRef.current = next;
@@ -297,10 +384,11 @@ function WordAssistant() {
         const valid = await solveValidated(next);
         setResults(valid);
         setTopWords(valid.slice(0, DISPLAY_LIMIT));
-        // #5 — delay trace 3-4s after grid update
         if (valid[0]) scheduleTrace(valid[0], "manual", TRACE_DELAY_MS);
       }
       setScanDebug(rows);
+      setTileResults(tRes ?? null);
+      setRawOcrJson(resp);
       setLastSyncAt(Date.now());
     } catch (err: any) {
       setLiveError(err?.message ?? "Live scan failed");
@@ -310,6 +398,7 @@ function WordAssistant() {
       else setLiveStatus("idle");
     }
   }
+
 
   async function startLiveSync() {
     setLiveError(null);
@@ -493,7 +582,7 @@ function WordAssistant() {
       }}
     >
       <header className="border-b border-white/10 bg-black/60 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-5">
           <div className="flex items-center gap-3">
             <div className="grid h-9 w-9 place-items-center rounded-md bg-[#FF69B4] text-white">
               <Sparkles className="h-4 w-4" />
@@ -510,29 +599,33 @@ function WordAssistant() {
               Grid Word Assistant
             </h1>
           </div>
+          {/* Online-now badge sits to the RIGHT of the title */}
+          <div
+            className="flex items-center gap-3 rounded-xl border border-pink-400/70 bg-black/70 px-4 py-2 animate-pulse"
+            style={{
+              boxShadow:
+                "0 0 12px rgba(255,0,127,0.85), 0 0 28px rgba(255,0,127,0.55), 0 0 48px rgba(255,105,180,0.4)",
+            }}
+          >
+            <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
+            <span
+              style={{
+                fontFamily: '"Press Start 2P", monospace',
+                color: "#ff007f",
+                fontSize: "0.72rem",
+                lineHeight: 1.2,
+                textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.9), 0 0 22px #ff007f, 0 0 2px #fff",
+              }}
+            >
+              ¡¡!!$$$ is ONLINE NOW!!¡¡$$
+            </span>
+          </div>
           <div className="text-xs text-white/60">
             {ready ? `${results.length.toLocaleString()} words` : "Loading dictionary…"}
           </div>
         </div>
       </header>
 
-      {/* Online now badge */}
-      <div className="mx-auto flex max-w-6xl justify-center px-4 pt-6">
-        <div className="flex items-center gap-3 rounded-xl border border-pink-400/60 bg-black/70 px-4 py-2 shadow-[0_0_18px_rgba(255,0,127,0.55)]">
-          <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
-          <span
-            style={{
-              fontFamily: '"Press Start 2P", monospace',
-              color: "#ff007f",
-              fontSize: "0.72rem",
-              lineHeight: 1.2,
-              textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.7), 0 0 2px #fff",
-            }}
-          >
-            ¡¡!!$$$ is ONLINE NOW!!¡¡$$
-          </span>
-        </div>
-      </div>
 
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
         <section className="flex flex-col items-center gap-4">
@@ -667,9 +760,48 @@ function WordAssistant() {
             </p>
           )}
           {scanDebug && (
-            <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
+            <div className="w-full max-w-md rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80">
               <div className="mb-1 text-pink-300">Row/col mapping:</div>
               {scanDebug.map((r, i) => (<div key={i}>row {i}: {r.join(" · ")}</div>))}
+              {tileResults && (
+                <div className="mt-2 border-t border-white/10 pt-2">
+                  <div className="mb-1 text-pink-300">Per-tile OCR results:</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {tileResults.map((t) => (
+                      <div
+                        key={t.index}
+                        className={[
+                          "rounded px-1 py-1 text-center",
+                          t.letter
+                            ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
+                            : "bg-red-500/20 text-red-300 ring-1 ring-red-400/40",
+                        ].join(" ")}
+                        title={t.error || t.rawText || ""}
+                      >
+                        <div className="text-sm font-bold">{t.letter || "∅"}</div>
+                        <div className="text-[9px] opacity-70">
+                          {t.confidence != null ? `${Math.round(t.confidence * 100)}%` : t.error ? "err" : "—"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {rawOcrJson && (
+                <div className="mt-2 border-t border-white/10 pt-2">
+                  <button
+                    onClick={() => setShowRaw((s) => !s)}
+                    className="text-pink-300 underline hover:text-pink-200"
+                  >
+                    {showRaw ? "Hide" : "Show"} raw OCR response
+                  </button>
+                  {showRaw && (
+                    <pre className="mt-1 max-h-64 overflow-auto rounded bg-black/60 p-2 text-[10px] leading-tight text-white/70">
+                      {JSON.stringify(rawOcrJson, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <p className="max-w-md text-center text-xs text-white/50">
@@ -748,6 +880,9 @@ function WordAssistant() {
           }}
         >
           Vibe Coded by Jazzy Raielle, xoxo
+        </p>
+        <p className="mt-3 text-xs text-white/50">
+          © {new Date().getFullYear()} Jazzy Raielle. All rights reserved.
         </p>
       </footer>
     </div>
