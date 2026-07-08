@@ -536,8 +536,8 @@ function WordAssistant() {
 
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
         <section className="flex flex-col items-center gap-4">
-          {/* #1 — three-column layout: Manual | Live Camera | Scanned */}
-          <div className="grid gap-4 md:grid-cols-3 items-start">
+          {/* Strict horizontal three-column layout: Manual | Live Camera | Scanned */}
+          <div className="grid w-full grid-cols-3 gap-4 items-start">
             <GridBoard id="manual" letters={manual} editable label="Manual Grid" mismatchCells={gridMatch.diffs} />
 
             <div className="flex flex-col items-center gap-3 rounded-2xl p-4 bg-black/50 ring-1 ring-white/10 backdrop-blur-sm">
