@@ -371,7 +371,7 @@ function WordAssistant() {
     try {
       const tiles = await captureFrameTiles();
       if (!tiles) return;
-      const resp: any = await extract({ data: { tiles } });
+      const resp = await ocrTiles(tiles);
       const { rows, letters: got, tiles: tRes } = resp;
       const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
       if (changed > 0 || reason === "rescan") {
