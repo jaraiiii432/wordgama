@@ -29,6 +29,21 @@ const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
 const EMPTY_GRID = Array(16).fill("");
 const DISPLAY_LIMIT = 50;
 const TRACE_DELAY_MS = 3500;
+const SETTINGS_KEY = "gwa.syncSettings.v1";
+type SyncSettings = { scanIntervalMs: number; debounceMs: number };
+const DEFAULT_SETTINGS: SyncSettings = { scanIntervalMs: 2500, debounceMs: 10 };
+function loadSettings(): SyncSettings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const p = JSON.parse(raw);
+    return {
+      scanIntervalMs: Math.min(5000, Math.max(1000, Number(p.scanIntervalMs) || DEFAULT_SETTINGS.scanIntervalMs)),
+      debounceMs: Math.min(200, Math.max(0, Number(p.debounceMs) || DEFAULT_SETTINGS.debounceMs)),
+    };
+  } catch { return DEFAULT_SETTINGS; }
+}
 
 const APP_BADGE_NAME = "Grid Word Assistant";
 
