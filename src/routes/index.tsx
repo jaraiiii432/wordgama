@@ -333,13 +333,13 @@ function WordAssistant() {
     const t0 = performance.now();
     try {
       const tiles = await fileToTiles(file);
-      console.log("[OCR] sending", tiles.length, "tiles, first tile ~", Math.round(tiles[0].length * 0.75 / 1024), "KB");
-      const resp: any = await extract({ data: { tiles } });
+      console.log("[OCR] recognising", tiles.length, "tiles on-device");
+      const resp = await ocrTiles(tiles);
       const { rows, letters: got, tiles: tRes } = resp;
       setScanned(got);
       scannedRef.current = got;
       setScanDebug(rows);
-      setTileResults(tRes ?? null);
+      setTileResults(tRes);
       setRawOcrJson(resp);
       setActive("scanned");
       setTopWords(null);
