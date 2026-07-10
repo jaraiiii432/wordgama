@@ -555,7 +555,8 @@ function WordAssistant() {
             const order = traced ? traceCells.indexOf(i) : h ? h.cells.indexOf(i) : -1;
             const mismatched = mismatchCells?.includes(i);
             const base =
-              "relative z-10 h-12 w-12 rounded-lg text-center text-xl font-bold uppercase transition-all sm:h-14 sm:w-14 sm:text-2xl focus:outline-none focus:ring-2 focus:ring-white/70";
+              "relative z-10 w-full rounded-lg text-center font-bold uppercase transition-all focus:outline-none focus:ring-2 focus:ring-white/70";
+            const tileStyle: React.CSSProperties = { aspectRatio: "1 / 1", fontSize: "clamp(1rem, 3.6vw, 1.75rem)" };
             const tileColor = highlighted
               ? traceForBoard?.locked
                 ? "bg-amber-300 text-black shadow-lg shadow-amber-300/40 scale-105"
