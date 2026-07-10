@@ -228,6 +228,13 @@ function WordAssistant() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scannedRef = useRef<string[]>(scanned);
   const manualRef = useRef<string[]>(manual);
+  const [settings, setSettings] = useState<SyncSettings>(DEFAULT_SETTINGS);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => { setSettings(loadSettings()); }, []);
+  useEffect(() => {
+    try { window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  }, [settings]);
 
   useEffect(() => {
     loadTrie().then((trie) => {
