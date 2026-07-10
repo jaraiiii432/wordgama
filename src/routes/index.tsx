@@ -536,7 +536,7 @@ function WordAssistant() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-400">Active</span>
           )}
         </div>
-        <div className="relative grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <div className="relative grid w-full gap-[clamp(4px,1.2vw,10px)]" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
           {tracePoints && (
             <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
               <polyline
