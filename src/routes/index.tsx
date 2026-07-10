@@ -268,7 +268,7 @@ function WordAssistant() {
         setResults(filterValidPaths(solve(grid, trie), trie));
         setSolving(false);
       });
-    }, 10);
+    }, settings.debounceMs);
     return () => clearTimeout(id);
   }, [grid, ready]);
 
