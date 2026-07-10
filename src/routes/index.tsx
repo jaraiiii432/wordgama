@@ -621,32 +621,12 @@ function WordAssistant() {
               Grid Word Assistant
             </h1>
           </div>
-          {/* Online-now badge sits to the RIGHT of the title */}
-          <div
-            className="flex items-center gap-3 rounded-xl border border-pink-400/70 bg-black/70 px-4 py-2 animate-pulse"
-            style={{
-              boxShadow:
-                "0 0 12px rgba(255,0,127,0.85), 0 0 28px rgba(255,0,127,0.55), 0 0 48px rgba(255,105,180,0.4)",
-            }}
-          >
-            <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
-            <span
-              style={{
-                fontFamily: '"Press Start 2P", monospace',
-                color: "#ff007f",
-                fontSize: "0.72rem",
-                lineHeight: 1.2,
-                textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.9), 0 0 22px #ff007f, 0 0 2px #fff",
-              }}
-            >
-              ¡¡!!$$$ is ONLINE NOW!!¡¡$$
-            </span>
-          </div>
           <div className="text-xs text-white/60">
             {ready ? `${results.length.toLocaleString()} words` : "Loading dictionary…"}
           </div>
         </div>
       </header>
+
 
 
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
