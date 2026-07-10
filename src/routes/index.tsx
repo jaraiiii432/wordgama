@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
-import { extractGrid } from "@/lib/grid-ocr.functions";
+import { ocrTiles } from "@/lib/tesseract-ocr";
 import { filterValidPaths, loadTrie, solve, type DictionaryTrie, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle, RefreshCw } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle, RefreshCw, Settings } from "lucide-react";
 import onlineNowAsset from "@/assets/online-now.gif.asset.json";
 import skullsBgAsset from "@/assets/skulls-bg.jpg.asset.json";
 
@@ -30,6 +29,21 @@ const DEFAULT_GRID = "TRIESONALPHABET".padEnd(16, "S").slice(0, 16).split("");
 const EMPTY_GRID = Array(16).fill("");
 const DISPLAY_LIMIT = 50;
 const TRACE_DELAY_MS = 3500;
+const SETTINGS_KEY = "gwa.syncSettings.v1";
+type SyncSettings = { scanIntervalMs: number; debounceMs: number };
+const DEFAULT_SETTINGS: SyncSettings = { scanIntervalMs: 2500, debounceMs: 10 };
+function loadSettings(): SyncSettings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const p = JSON.parse(raw);
+    return {
+      scanIntervalMs: Math.min(5000, Math.max(1000, Number(p.scanIntervalMs) || DEFAULT_SETTINGS.scanIntervalMs)),
+      debounceMs: Math.min(200, Math.max(0, Number(p.debounceMs) || DEFAULT_SETTINGS.debounceMs)),
+    };
+  } catch { return DEFAULT_SETTINGS; }
+}
 
 const APP_BADGE_NAME = "Grid Word Assistant";
 
@@ -201,7 +215,6 @@ function WordAssistant() {
   const trieRef = useRef<DictionaryTrie | null>(null);
   const traceRunRef = useRef(0);
   const pendingTraceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const extract = useServerFn(extractGrid);
 
   const [liveOn, setLiveOn] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -215,6 +228,13 @@ function WordAssistant() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scannedRef = useRef<string[]>(scanned);
   const manualRef = useRef<string[]>(manual);
+  const [settings, setSettings] = useState<SyncSettings>(DEFAULT_SETTINGS);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => { setSettings(loadSettings()); }, []);
+  useEffect(() => {
+    try { window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  }, [settings]);
 
   useEffect(() => {
     loadTrie().then((trie) => {
@@ -248,7 +268,7 @@ function WordAssistant() {
         setResults(filterValidPaths(solve(grid, trie), trie));
         setSolving(false);
       });
-    }, 10);
+    }, settings.debounceMs);
     return () => clearTimeout(id);
   }, [grid, ready]);
 
@@ -270,7 +290,7 @@ function WordAssistant() {
 
   const [uploadMs, setUploadMs] = useState<number | null>(null);
   const [scanDebug, setScanDebug] = useState<string[][] | null>(null);
-  const [tileResults, setTileResults] = useState<Array<{ index: number; letter: string; confidence: number | null; error?: string; rawText?: string }> | null>(null);
+  const [tileResults, setTileResults] = useState<Array<{ index: number; letter: string; confidence: number | null; error?: string; rawText?: string; attempt?: string }> | null>(null);
   const [rawOcrJson, setRawOcrJson] = useState<any>(null);
   const [showRaw, setShowRaw] = useState(false);
 
@@ -335,13 +355,13 @@ function WordAssistant() {
     const t0 = performance.now();
     try {
       const tiles = await fileToTiles(file);
-      console.log("[OCR] sending", tiles.length, "tiles, first tile ~", Math.round(tiles[0].length * 0.75 / 1024), "KB");
-      const resp: any = await extract({ data: { tiles } });
+      console.log("[OCR] recognising", tiles.length, "tiles on-device");
+      const resp = await ocrTiles(tiles);
       const { rows, letters: got, tiles: tRes } = resp;
       setScanned(got);
       scannedRef.current = got;
       setScanDebug(rows);
-      setTileResults(tRes ?? null);
+      setTileResults(tRes);
       setRawOcrJson(resp);
       setActive("scanned");
       setTopWords(null);
@@ -373,7 +393,7 @@ function WordAssistant() {
     try {
       const tiles = await captureFrameTiles();
       if (!tiles) return;
-      const resp: any = await extract({ data: { tiles } });
+      const resp = await ocrTiles(tiles);
       const { rows, letters: got, tiles: tRes } = resp;
       const { next, changed } = mergeDetectedLetters(scannedRef.current, got);
       if (changed > 0 || reason === "rescan") {
@@ -417,7 +437,7 @@ function WordAssistant() {
       setLiveOn(true);
       setLiveStatus("watching");
       runScanCycle("live");
-      intervalRef.current = setInterval(() => runScanCycle("live"), 2500);
+      intervalRef.current = setInterval(() => runScanCycle("live"), settings.scanIntervalMs);
     } catch (err: any) {
       setLiveError(err?.message ?? "Could not start camera");
       setLiveStatus("idle");
@@ -516,7 +536,7 @@ function WordAssistant() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-400">Active</span>
           )}
         </div>
-        <div className="relative grid gap-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <div className="relative grid w-full gap-[clamp(4px,1.2vw,10px)]" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
           {tracePoints && (
             <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
               <polyline
@@ -535,7 +555,8 @@ function WordAssistant() {
             const order = traced ? traceCells.indexOf(i) : h ? h.cells.indexOf(i) : -1;
             const mismatched = mismatchCells?.includes(i);
             const base =
-              "relative z-10 h-12 w-12 rounded-lg text-center text-xl font-bold uppercase transition-all sm:h-14 sm:w-14 sm:text-2xl focus:outline-none focus:ring-2 focus:ring-white/70";
+              "relative z-10 w-full rounded-lg text-center font-bold uppercase transition-all focus:outline-none focus:ring-2 focus:ring-white/70";
+            const tileStyle: React.CSSProperties = { aspectRatio: "1 / 1", fontSize: "clamp(1rem, 3.6vw, 1.75rem)" };
             const tileColor = highlighted
               ? traceForBoard?.locked
                 ? "bg-amber-300 text-black shadow-lg shadow-amber-300/40 scale-105"
@@ -551,10 +572,11 @@ function WordAssistant() {
                     maxLength={1}
                     onChange={(e) => setManualCell(i, e.target.value)}
                     onFocus={(e) => { setActive("manual"); e.target.select(); }}
+                    style={tileStyle}
                     className={`${base} ${tileColor} ${mismatchRing}`}
                   />
                 ) : (
-                  <div className={`${base} grid place-items-center ${c ? tileColor : "bg-white/10 text-white/40"} ${mismatchRing}`}>
+                  <div style={tileStyle} className={`${base} grid place-items-center ${c ? tileColor : "bg-white/10 text-white/40"} ${mismatchRing}`}>
                     {c || ""}
                   </div>
                 )}
@@ -599,32 +621,12 @@ function WordAssistant() {
               Grid Word Assistant
             </h1>
           </div>
-          {/* Online-now badge sits to the RIGHT of the title */}
-          <div
-            className="flex items-center gap-3 rounded-xl border border-pink-400/70 bg-black/70 px-4 py-2 animate-pulse"
-            style={{
-              boxShadow:
-                "0 0 12px rgba(255,0,127,0.85), 0 0 28px rgba(255,0,127,0.55), 0 0 48px rgba(255,105,180,0.4)",
-            }}
-          >
-            <img src={onlineNowAsset.url} alt="online now badge" className="h-10 w-auto" />
-            <span
-              style={{
-                fontFamily: '"Press Start 2P", monospace',
-                color: "#ff007f",
-                fontSize: "0.72rem",
-                lineHeight: 1.2,
-                textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.9), 0 0 22px #ff007f, 0 0 2px #fff",
-              }}
-            >
-              ¡¡!!$$$ is ONLINE NOW!!¡¡$$
-            </span>
-          </div>
           <div className="text-xs text-white/60">
             {ready ? `${results.length.toLocaleString()} words` : "Loading dictionary…"}
           </div>
         </div>
       </header>
+
 
 
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[auto_1fr]">
@@ -672,6 +674,13 @@ function WordAssistant() {
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${liveStatus === "scanning" ? "animate-spin" : ""}`} /> Rescan
                 </button>
+                <button
+                  onClick={() => setShowSettings((s) => !s)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"
+                  title="Sync settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
               </div>
               {/* #8 — Grid match indicator */}
               <div
@@ -695,10 +704,57 @@ function WordAssistant() {
                   Synced {Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago
                 </p>
               )}
+              {showSettings && (
+                <div className="w-full rounded-md border border-white/15 bg-black/70 p-2 text-[11px] text-white/80">
+                  <div className="mb-1 font-semibold text-pink-300">Sync Settings</div>
+                  <label className="mb-1.5 block">
+                    Scan interval: {settings.scanIntervalMs}ms
+                    <input
+                      type="range" min={1000} max={5000} step={100}
+                      value={settings.scanIntervalMs}
+                      onChange={(e) => setSettings((s) => ({ ...s, scanIntervalMs: Number(e.target.value) }))}
+                      className="w-full accent-pink-500"
+                    />
+                  </label>
+                  <label className="block">
+                    Debounce: {settings.debounceMs}ms
+                    <input
+                      type="range" min={0} max={200} step={5}
+                      value={settings.debounceMs}
+                      onChange={(e) => setSettings((s) => ({ ...s, debounceMs: Number(e.target.value) }))}
+                      className="w-full accent-pink-500"
+                    />
+                  </label>
+                  <p className="mt-1 text-[10px] text-white/50">Changes to interval apply on next Start.</p>
+                </div>
+              )}
             </div>
 
             <GridBoard id="scanned" letters={scanned} editable={false} label="Scanned Grid" mismatchCells={gridMatch.diffs} />
           </div>
+
+          {/* Centered Online status badge — own row below grids */}
+          <div
+            className="flex items-center gap-3 rounded-xl border border-pink-400/70 bg-black/70 px-4 py-2"
+            style={{
+              boxShadow: "0 0 12px rgba(255,0,127,0.85), 0 0 28px rgba(255,0,127,0.55)",
+            }}
+          >
+            <img src={onlineNowAsset.url} alt="online now badge" className="h-8 w-auto" />
+            <span
+              className="flex items-center gap-1.5"
+              style={{
+                fontFamily: '"Press Start 2P", monospace',
+                color: "#ff007f",
+                fontSize: "0.72rem",
+                textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.9)",
+              }}
+            >
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Online
+            </span>
+          </div>
+
 
           <div className="flex flex-wrap justify-center gap-2">
             <button
