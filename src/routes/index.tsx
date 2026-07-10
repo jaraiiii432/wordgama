@@ -674,6 +674,13 @@ function WordAssistant() {
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${liveStatus === "scanning" ? "animate-spin" : ""}`} /> Rescan
                 </button>
+                <button
+                  onClick={() => setShowSettings((s) => !s)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"
+                  title="Sync settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
               </div>
               {/* #8 — Grid match indicator */}
               <div
