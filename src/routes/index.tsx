@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
-import { extractGrid } from "@/lib/grid-ocr.functions";
+import { ocrTiles } from "@/lib/tesseract-ocr";
 import { filterValidPaths, loadTrie, solve, type DictionaryTrie, type Path } from "@/lib/solver";
-import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle, RefreshCw } from "lucide-react";
+import { Upload, Loader2, Shuffle, Sparkles, Camera, Wand2, Eraser, Radio, StopCircle, RefreshCw, Settings } from "lucide-react";
 import onlineNowAsset from "@/assets/online-now.gif.asset.json";
 import skullsBgAsset from "@/assets/skulls-bg.jpg.asset.json";
 
