@@ -572,10 +572,11 @@ function WordAssistant() {
                     maxLength={1}
                     onChange={(e) => setManualCell(i, e.target.value)}
                     onFocus={(e) => { setActive("manual"); e.target.select(); }}
+                    style={tileStyle}
                     className={`${base} ${tileColor} ${mismatchRing}`}
                   />
                 ) : (
-                  <div className={`${base} grid place-items-center ${c ? tileColor : "bg-white/10 text-white/40"} ${mismatchRing}`}>
+                  <div style={tileStyle} className={`${base} grid place-items-center ${c ? tileColor : "bg-white/10 text-white/40"} ${mismatchRing}`}>
                     {c || ""}
                   </div>
                 )}
