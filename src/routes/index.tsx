@@ -200,7 +200,6 @@ function WordAssistant() {
   const trieRef = useRef<DictionaryTrie | null>(null);
   const traceRunRef = useRef(0);
   const pendingTraceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const extract = useServerFn(extractGrid);
 
   const [liveOn, setLiveOn] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
