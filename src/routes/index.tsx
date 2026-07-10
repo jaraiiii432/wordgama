@@ -437,7 +437,7 @@ function WordAssistant() {
       setLiveOn(true);
       setLiveStatus("watching");
       runScanCycle("live");
-      intervalRef.current = setInterval(() => runScanCycle("live"), 2500);
+      intervalRef.current = setInterval(() => runScanCycle("live"), settings.scanIntervalMs);
     } catch (err: any) {
       setLiveError(err?.message ?? "Could not start camera");
       setLiveStatus("idle");
