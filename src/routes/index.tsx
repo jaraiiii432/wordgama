@@ -704,10 +704,57 @@ function WordAssistant() {
                   Synced {Math.max(0, Math.round((nowTs - lastSyncAt) / 1000))}s ago
                 </p>
               )}
+              {showSettings && (
+                <div className="w-full rounded-md border border-white/15 bg-black/70 p-2 text-[11px] text-white/80">
+                  <div className="mb-1 font-semibold text-pink-300">Sync Settings</div>
+                  <label className="mb-1.5 block">
+                    Scan interval: {settings.scanIntervalMs}ms
+                    <input
+                      type="range" min={1000} max={5000} step={100}
+                      value={settings.scanIntervalMs}
+                      onChange={(e) => setSettings((s) => ({ ...s, scanIntervalMs: Number(e.target.value) }))}
+                      className="w-full accent-pink-500"
+                    />
+                  </label>
+                  <label className="block">
+                    Debounce: {settings.debounceMs}ms
+                    <input
+                      type="range" min={0} max={200} step={5}
+                      value={settings.debounceMs}
+                      onChange={(e) => setSettings((s) => ({ ...s, debounceMs: Number(e.target.value) }))}
+                      className="w-full accent-pink-500"
+                    />
+                  </label>
+                  <p className="mt-1 text-[10px] text-white/50">Changes to interval apply on next Start.</p>
+                </div>
+              )}
             </div>
 
             <GridBoard id="scanned" letters={scanned} editable={false} label="Scanned Grid" mismatchCells={gridMatch.diffs} />
           </div>
+
+          {/* Centered Online status badge — own row below grids */}
+          <div
+            className="flex items-center gap-3 rounded-xl border border-pink-400/70 bg-black/70 px-4 py-2"
+            style={{
+              boxShadow: "0 0 12px rgba(255,0,127,0.85), 0 0 28px rgba(255,0,127,0.55)",
+            }}
+          >
+            <img src={onlineNowAsset.url} alt="online now badge" className="h-8 w-auto" />
+            <span
+              className="flex items-center gap-1.5"
+              style={{
+                fontFamily: '"Press Start 2P", monospace',
+                color: "#ff007f",
+                fontSize: "0.72rem",
+                textShadow: "0 0 6px #ff007f, 0 0 12px rgba(255,105,180,0.9)",
+              }}
+            >
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Online
+            </span>
+          </div>
+
 
           <div className="flex flex-wrap justify-center gap-2">
             <button
